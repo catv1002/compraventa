@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
+import { Modal } from '../components/Modal';
 
 /**
  * Definición de un atributo dinámico, tal como la publica
@@ -79,11 +80,18 @@ export function InventoryPage() {
     queryFn: () => api.get<Category[]>('/categories'),
   });
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [weightGrams, setWeightGrams] = useState('');
   const [karats, setKarats] = useState(KARATS_DEFAULT);
+
+  function closeModal() {
+    setIsModalOpen(false);
+    setError(null);
+  }
 
   /**
    * Clases de joya = las subcategorías del catálogo (las 15 de C-03 cuelgan de
@@ -123,11 +131,19 @@ export function InventoryPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
+      // La clase NO se limpia: quien recibe joyas suele ingresar varias piezas
+      // de la misma clase seguidas, y volver a elegirla cada vez es fricción
+      // gratuita en el mostrador.
       setDescription('');
       setSerialNumber('');
       setWeightGrams('');
       setKarats(KARATS_DEFAULT);
+      closeModal();
     },
+    // El backend acumula todos los errores de validación de atributos en un solo
+    // mensaje (peso faltante, quilataje inválido…): se muestra tal cual.
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : 'Error al ingresar el artículo'),
   });
 
   const [appraisingItemId, setAppraisingItemId] = useState<string | null>(null);
@@ -150,118 +166,24 @@ export function InventoryPage() {
   function handleCreateItem(e: FormEvent) {
     e.preventDefault();
     if (!categoryId) return;
+    setError(null);
     createItem.mutate();
   }
 
-  const inputClass = 'rounded-md border border-slate-300 px-3 py-2 text-sm';
-  const labelClass = 'mb-1 block text-xs font-medium text-slate-600';
+  const inputClass = 'w-full rounded-md border border-slate-300 px-3 py-2 text-sm';
+  const labelClass = 'mb-1 block text-sm font-medium text-slate-700';
 
   return (
     <div>
-      <h2 className="mb-4 text-lg font-semibold text-slate-800">Inventario</h2>
-
-      <form onSubmit={handleCreateItem} className="mb-6 rounded-lg border border-slate-200 bg-white p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className={labelClass} htmlFor="clase-articulo">
-              Clase de artículo
-            </label>
-            <select
-              id="clase-articulo"
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className={`${inputClass} w-56`}
-              autoFocus
-              required
-            >
-              <option value="">Elija la clase…</option>
-              {selectableClasses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {classLabel(c)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="peso-gramos">
-              {weightDefinition?.label ?? 'Peso en gramos'}
-              {weightRequired ? ' *' : ''}
-            </label>
-            <input
-              id="peso-gramos"
-              value={weightGrams}
-              onChange={(e) => setWeightGrams(e.target.value)}
-              type="number"
-              step="0.01"
-              min={weightMin}
-              placeholder="0,00"
-              className={`${inputClass} w-28`}
-              required={weightRequired}
-            />
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="quilataje">
-              {karatsDefinition?.label ?? 'Quilataje'}
-            </label>
-            <select
-              id="quilataje"
-              value={karatValue}
-              onChange={(e) => setKarats(e.target.value)}
-              className={`${inputClass} w-28`}
-            >
-              {karatOptions.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="min-w-[16rem] flex-1">
-            <label className={labelClass} htmlFor="novedades">
-              Novedades de la pieza (opcional)
-            </label>
-            <input
-              id="novedades"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej.: tiene piedra roja, está partida"
-              className={`${inputClass} w-full`}
-            />
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="serie">
-              Serie / IMEI (opcional)
-            </label>
-            <input
-              id="serie"
-              value={serialNumber}
-              onChange={(e) => setSerialNumber(e.target.value)}
-              className={`${inputClass} w-40`}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={createItem.isPending}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {createItem.isPending ? 'Guardando…' : 'Ingresar artículo'}
-          </button>
-        </div>
-
-        <p className="mt-2 text-xs text-slate-500">
-          La clase se elige de la lista; el peso es el dato con el que se valora la pieza. Las
-          novedades van en texto libre.
-        </p>
-
-        {createItem.isError && (
-          <p className="mt-2 text-sm text-red-600">{(createItem.error as ApiError).message}</p>
-        )}
-      </form>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-800">Inventario</h2>
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          + Nuevo artículo
+        </button>
+      </div>
 
       <div className="space-y-2">
         {items?.map((item) => {
@@ -327,6 +249,119 @@ export function InventoryPage() {
           );
         })}
       </div>
+
+      {isModalOpen && (
+        <Modal title="Ingresar artículo" onClose={closeModal}>
+          <form onSubmit={handleCreateItem} className="space-y-4">
+            <div>
+              <label className={labelClass} htmlFor="clase-articulo">
+                Clase de artículo
+              </label>
+              <select
+                id="clase-articulo"
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className={inputClass}
+                autoFocus
+                required
+              >
+                <option value="">Elija la clase…</option>
+                {selectableClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {classLabel(c)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelClass} htmlFor="peso-gramos">
+                  {weightDefinition?.label ?? 'Peso en gramos'}
+                  {weightRequired ? ' *' : ''}
+                </label>
+                <input
+                  id="peso-gramos"
+                  value={weightGrams}
+                  onChange={(e) => setWeightGrams(e.target.value)}
+                  type="number"
+                  step="0.01"
+                  min={weightMin}
+                  placeholder="0,00"
+                  className={inputClass}
+                  required={weightRequired}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass} htmlFor="quilataje">
+                  {karatsDefinition?.label ?? 'Quilataje'}
+                </label>
+                <select
+                  id="quilataje"
+                  value={karatValue}
+                  onChange={(e) => setKarats(e.target.value)}
+                  className={inputClass}
+                >
+                  {karatOptions.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="novedades">
+                Novedades de la pieza (opcional)
+              </label>
+              <input
+                id="novedades"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Ej.: tiene piedra roja, está partida"
+                className={inputClass}
+              />
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="serie">
+                Serie / IMEI (opcional)
+              </label>
+              <input
+                id="serie"
+                value={serialNumber}
+                onChange={(e) => setSerialNumber(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+
+            <p className="text-xs text-slate-500">
+              El peso es el dato con el que se valora la pieza. Las novedades van en texto libre.
+            </p>
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={createItem.isPending}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {createItem.isPending ? 'Guardando…' : 'Ingresar artículo'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
