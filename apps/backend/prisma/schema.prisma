@@ -1,0 +1,696 @@
+// Prisma schema — Fase 1 (MVP, single-tenant operativo).
+// tenant_id/branch_id están presentes desde ya para soportar Fase 4+ sin migrar el modelo,
+// aunque en Fase 1 solo exista un Tenant fijo. Ver docs/06-modelo-datos-erd.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Core / multi-tenant ----------
+
+model Tenant {
+  id        String   @id @default(uuid())
+  legalName String
+  taxId     String   @unique
+  createdAt DateTime @default(now())
+
+  branches      Branch[]
+  users         User[]
+  customers     Customer[]
+  categories    Category[]
+  items         Item[]
+  contracts     Contract[]
+  configuration TenantConfiguration?
+  accounts      Account[]
+  journalEntries JournalEntry[]
+  invoices      Invoice[]
+
+  @@map("tenants")
+}
+
+model Branch {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  name     String
+  address  String?
+
+  users         User[]
+  items         Item[]
+  cashRegisters CashRegister[]
+  contracts     Contract[]
+  contractSequence ContractSequence?
+  transfersOut  BranchTransfer[] @relation("TransferFromBranch")
+  transfersIn   BranchTransfer[] @relation("TransferToBranch")
+
+  createdAt DateTime @default(now())
+
+  @@map("branches")
+}
+
+enum UserRole {
+  Cashier
+  Appraiser
+  SalesAdvisor
+  BranchManager
+  CollectionsAgent
+  Technician
+  Accountant
+  Admin
+  Auditor
+}
+
+model User {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  homeBranchId  String
+  homeBranch    Branch   @relation(fields: [homeBranchId], references: [id])
+  email         String   @unique
+  passwordHash  String
+  fullName      String
+  role          UserRole
+  mfaEnabled    Boolean  @default(false)
+  mfaSecret     String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  appraisals        Appraisal[]
+  auditLogs         AuditLog[]
+  cashRegisters     CashRegister[]
+  repairOrders      RepairOrder[]
+  transfersRequested BranchTransfer[] @relation("TransferRequestedBy")
+  transfersReceived  BranchTransfer[] @relation("TransferReceivedBy")
+  collectionContacts CollectionContactAttempt[]
+
+  @@map("users")
+}
+
+// ---------- Customers ----------
+
+enum CustomerType {
+  Individual
+  Company
+}
+
+model Customer {
+  id                   String       @id @default(uuid())
+  tenantId             String
+  tenant               Tenant       @relation(fields: [tenantId], references: [id])
+  type                 CustomerType
+  fullName             String
+  identificationNumber String
+  phone                String?
+  email                String?
+  address              String?
+  flagged              Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+
+  documents Document[]
+  contracts Contract[]
+  invoices  Invoice[]
+  references Reference[]
+
+  @@unique([tenantId, identificationNumber])
+  @@map("customers")
+}
+
+// Contacto de referencia (segundo contacto) — opcional, útil para ubicar al
+// cliente si no responde durante la vigencia de un contrato de empeño.
+// Ver docs/03-dominios-ddd.md (2. Clientes).
+model Reference {
+  id           String   @id @default(uuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fullName     String
+  phone        String
+  relationship String?
+  createdAt    DateTime @default(now())
+
+  @@map("references")
+}
+
+model Document {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  type       String
+  fileUrl    String
+  createdAt  DateTime @default(now())
+
+  @@map("documents")
+}
+
+// ---------- Inventory ----------
+
+enum ItemStatus {
+  Received
+  Appraised
+  InPledgeCustody
+  InStock
+  InConsignment
+  Rejected
+  InRepair
+  OnLayaway
+  InTransit
+  Sold
+  InWarranty
+  Released
+  Returned
+  Archived
+}
+
+model Category {
+  id               String     @id @default(uuid())
+  tenantId         String
+  tenant           Tenant     @relation(fields: [tenantId], references: [id])
+  parentCategoryId String?
+  parentCategory   Category?  @relation("CategoryToSubcategory", fields: [parentCategoryId], references: [id])
+  subcategories    Category[] @relation("CategoryToSubcategory")
+  name             String
+  attributeSchema  Json       @default("{\"attributes\":[]}")
+
+  items Item[]
+
+  @@map("categories")
+}
+
+model Item {
+  id           String     @id @default(uuid())
+  tenantId     String
+  tenant       Tenant     @relation(fields: [tenantId], references: [id])
+  branchId     String
+  branch       Branch     @relation(fields: [branchId], references: [id])
+  categoryId   String
+  category     Category   @relation(fields: [categoryId], references: [id])
+  status       ItemStatus @default(Received)
+  serialNumber String?
+  qrCode       String?    @unique
+  description  String?
+  costBasis    Decimal    @db.Decimal(14, 2) @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  attributes DynamicAttribute[]
+  photos     Photo[]
+  appraisals Appraisal[]
+  contracts  Contract[]
+  transfers  BranchTransfer[]
+  repairOrders RepairOrder[]
+  invoiceLines InvoiceLine[]
+
+  @@map("items")
+}
+
+model DynamicAttribute {
+  id       String @id @default(uuid())
+  itemId   String
+  item     Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  key      String
+  value    String
+  dataType String
+
+  @@map("dynamic_attributes")
+}
+
+model Photo {
+  id        String   @id @default(uuid())
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url       String
+  createdAt DateTime @default(now())
+
+  @@map("photos")
+}
+
+// ---------- Appraisals ----------
+
+model Appraisal {
+  id                  String   @id @default(uuid())
+  itemId              String
+  item                Item     @relation(fields: [itemId], references: [id])
+  appraisedById       String
+  appraisedBy         User     @relation(fields: [appraisedById], references: [id])
+  appraisedValue      Decimal  @db.Decimal(14, 2)
+  loanablePercentage  Decimal  @db.Decimal(5, 2)
+  notes               String?
+  createdAt           DateTime @default(now())
+
+  @@map("appraisals")
+}
+
+// ---------- Contracts ----------
+
+enum ContractType {
+  Pawn
+  DirectPurchase
+  Sale
+  Layaway
+}
+
+enum ContractStatus {
+  Created
+  Active
+  Renewed
+  Overdue
+  Expired
+  Settled
+  Forfeited
+  Cancelled
+}
+
+model Contract {
+  id             String         @id @default(uuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  branchId       String
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  // Consecutivo de negocio, visible en pantalla y en el impreso. Es el número
+  // que el cliente y el negocio usan para referirse al contrato — el uuid no se
+  // muestra nunca. Único por sucursal. Ver docs/11 (RN-08) y CV-008.
+  contractNumber Int
+  customerId     String
+  customer       Customer       @relation(fields: [customerId], references: [id])
+  itemId         String
+  item           Item           @relation(fields: [itemId], references: [id])
+  contractType   ContractType
+  status         ContractStatus @default(Created)
+  principalAmount Decimal       @db.Decimal(14, 2)
+  // Tasa MENSUAL pactada (0.0400 = 4% mensual). Ver CV-015 sobre la conversión
+  // necesaria antes de compararla contra TenantConfiguration.maxLegalRate.
+  interestRate    Decimal       @db.Decimal(6, 4) @default(0)
+  dueDate         DateTime?
+  renewalCount    Int           @default(0)
+  paidAmount      Decimal       @db.Decimal(14, 2) @default(0)
+
+  // ---- Ancla del devengo de intereses (CV-002) ----
+  // Fecha desde la cual corre el interés: el desembolso, no la creación.
+  interestAccrualStart DateTime?
+  // Hasta qué fecha están pagados los intereses. Cada mes pagado la adelanta un
+  // mes. Permite pago parcial (RN-04: "debo 2 meses, pago 1") sin perder el
+  // rastro de lo que sigue en mora, y hace verificable "estar al día" (RN-03).
+  interestPaidThrough  DateTime?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  movements       ContractMovement[]
+  cashMovements   CashMovement[]
+  collectionContacts CollectionContactAttempt[]
+  invoice         Invoice?
+
+  @@unique([branchId, contractNumber])
+  @@index([tenantId, status])
+  @@map("contracts")
+}
+
+// Contador del consecutivo por sucursal. Vive en su propia tabla para poder
+// incrementarlo dentro de la misma transacción que crea el contrato, sin huecos
+// ni colisiones bajo concurrencia (CV-008).
+model ContractSequence {
+  branchId    String @id
+  branch      Branch @relation(fields: [branchId], references: [id])
+  lastNumber  Int    @default(0)
+
+  @@map("contract_sequences")
+}
+
+enum ContractMovementType {
+  Disbursement
+  InterestPayment
+  PrincipalPayment
+  Renewal
+  Settlement
+}
+
+model ContractMovement {
+  id           String               @id @default(uuid())
+  contractId   String
+  contract     Contract             @relation(fields: [contractId], references: [id])
+  type         ContractMovementType
+  amount       Decimal              @db.Decimal(14, 2)
+  movementDate DateTime             @default(now())
+
+  // Retiro del bien por un tercero autorizado (no el cliente titular) al
+  // liquidar — boleta firmada + cédula, ver docs/01-investigacion-negocio.md §8.
+  thirdPartyName     String?
+  thirdPartyIdNumber String?
+
+  @@map("contract_movements")
+}
+
+// ---------- Cash ----------
+
+enum CashRegisterStatus {
+  Closed
+  Open
+  InCashCount
+  Reconciled
+}
+
+model CashRegister {
+  id           String             @id @default(uuid())
+  branchId     String
+  branch       Branch             @relation(fields: [branchId], references: [id])
+  openedById   String
+  openedBy     User               @relation(fields: [openedById], references: [id])
+  registerDate DateTime           @default(now())
+  baseAmount   Decimal            @db.Decimal(14, 2)
+  status       CashRegisterStatus @default(Open)
+
+  movements CashMovement[]
+  cashCount CashCount?
+
+  @@map("cash_registers")
+}
+
+enum CashMovementType {
+  CashIn
+  CashOut
+}
+
+/// Un asiento del libro de caja. Es la fila del extracto (C-07 del sistema
+/// legado): documento · fecha · detalle · débito · crédito · saldo corrido ·
+/// fecha de proceso con hora. Ver CV-032 en docs/12-gap-analysis-y-backlog.md.
+///
+/// El signo NO va en el importe: `amount` es siempre positivo y la dirección la
+/// lleva `type` — CashIn es débito (entra efectivo) y CashOut es crédito (sale).
+/// Ver RN-24; la convención está verificada contra las 16 filas de C-07, que
+/// encadenan sin descuadre.
+model CashMovement {
+  id String @id @default(uuid())
+
+  /// Orden de asiento dentro del libro. Existe porque `createdAt` NO alcanza
+  /// como desempate: una liquidación asienta capital y retroventa dentro de la
+  /// misma transacción y puede quedar con el mismo timestamp al milisegundo
+  /// (RN-26; en el legado, contrato 92627 el 15/07 a las 16:11 son dos filas del
+  /// mismo minuto). Sin un orden estable el saldo corrido cambiaría entre dos
+  /// consultas idénticas, que es justo lo que impide auditar un descuadre.
+  seq Int @default(autoincrement())
+
+  cashRegisterId String
+  cashRegister   CashRegister     @relation(fields: [cashRegisterId], references: [id])
+  type           CashMovementType
+  amount         Decimal          @db.Decimal(14, 2)
+
+  /// Columna "Documento" del extracto: el número de contrato de negocio
+  /// (`Contract.contractNumber`) cuando el asiento nace de un contrato. Se
+  /// guarda como texto y no como FK porque es el identificador *visible* del
+  /// asiento — un ingreso o egreso manual de la dueña no tiene contrato y puede
+  /// llegar a llevar otro tipo de soporte. Nulo cuando no hay documento.
+  documentNumber String?
+
+  /// Columna "Detalle": el texto legal del asiento (RN-25) —
+  /// `CAPITAL LIQUIDACION DEL CONTRATO # 92627`,
+  /// `RETROVENTA PAGADO POR LIQUIDACION DEL CONTRATO # 92627`,
+  /// `RECOMPRA PAGADO POR ACTUALIZACION DEL CONTRATO # 92657`,
+  /// `ABONO A CAPITAL DEL CONTRATO # 92659`, `CONTRATO # 92748`.
+  ///
+  /// Es el ÚNICO dato del asiento que no se puede reconstruir después: el saldo
+  /// corrido se recalcula, el documento se vuelve a leer del contrato, pero qué
+  /// concepto se cobró solo lo sabe quien escribió la fila. Por eso es NOT NULL.
+  /// El vocabulario es el del libro y del contrato impreso, no el del mostrador
+  /// ("intereses", "abono", "liquidar"): ver skill contexto-negocio-colombia.
+  detail String
+
+  sourceType String
+  sourceId   String?
+  contractId String?
+  contract   Contract? @relation(fields: [contractId], references: [id])
+  createdAt  DateTime  @default(now())
+
+  @@index([cashRegisterId, createdAt, seq])
+  @@map("cash_movements")
+}
+
+model CashCount {
+  id                String       @id @default(uuid())
+  cashRegisterId    String       @unique
+  cashRegister      CashRegister @relation(fields: [cashRegisterId], references: [id])
+  discrepancy       Decimal      @db.Decimal(14, 2) @default(0)
+  resolutionStatus  String       @default("Pending")
+  createdAt         DateTime     @default(now())
+
+  @@map("cash_counts")
+}
+
+// ---------- Branches / transfers (Fase 2) ----------
+
+enum TransferStatus {
+  Requested
+  InTransit
+  Received
+  Cancelled
+}
+
+model BranchTransfer {
+  id             String         @id @default(uuid())
+  itemId         String
+  item           Item           @relation(fields: [itemId], references: [id])
+  fromBranchId   String
+  fromBranch     Branch         @relation("TransferFromBranch", fields: [fromBranchId], references: [id])
+  toBranchId     String
+  toBranch       Branch         @relation("TransferToBranch", fields: [toBranchId], references: [id])
+  status         TransferStatus @default(Requested)
+  requestedById  String
+  requestedBy    User           @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  receivedById   String?
+  receivedBy     User?          @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  createdAt      DateTime       @default(now())
+  receivedAt     DateTime?
+
+  @@map("branch_transfers")
+}
+
+// ---------- Workshop (Fase 2) ----------
+
+enum RepairOrderStatus {
+  Open
+  Completed
+  Cancelled
+}
+
+model RepairOrder {
+  id           String            @id @default(uuid())
+  itemId       String
+  item         Item              @relation(fields: [itemId], references: [id])
+  technicianId String
+  technician   User              @relation(fields: [technicianId], references: [id])
+  status       RepairOrderStatus @default(Open)
+  diagnosis    String?
+  totalCost    Decimal           @db.Decimal(14, 2) @default(0)
+  createdAt    DateTime          @default(now())
+  completedAt  DateTime?
+
+  spareParts SparePart[]
+
+  @@map("repair_orders")
+}
+
+model SparePart {
+  id            String      @id @default(uuid())
+  repairOrderId String
+  repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  description   String
+  cost          Decimal     @db.Decimal(14, 2)
+
+  @@map("spare_parts")
+}
+
+// ---------- Collections / cartera (Fase 2) ----------
+
+model CollectionContactAttempt {
+  id         String   @id @default(uuid())
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id])
+  channel    String
+  notes      String?
+  createdById String
+  createdBy   User    @relation(fields: [createdById], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@map("collection_contact_attempts")
+}
+
+// ---------- Accounting (Fase 2) ----------
+
+enum AccountType {
+  Asset
+  Liability
+  Equity
+  Revenue
+  Expense
+}
+
+model Account {
+  id       String      @id @default(uuid())
+  tenantId String
+  tenant   Tenant      @relation(fields: [tenantId], references: [id])
+  code     String
+  name     String
+  type     AccountType
+
+  journalEntryLines JournalEntryLine[]
+
+  @@unique([tenantId, code])
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  entryDate   DateTime @default(now())
+  sourceEvent String
+
+  lines JournalEntryLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+  branchId       String?
+  debit          Decimal      @db.Decimal(14, 2) @default(0)
+  credit         Decimal      @db.Decimal(14, 2) @default(0)
+
+  @@map("journal_entry_lines")
+}
+
+// ---------- Billing / facturación electrónica (Fase 2 — stub DIAN) ----------
+
+enum InvoiceStatus {
+  Draft
+  Issued
+  Rejected
+}
+
+model Invoice {
+  id         String        @id @default(uuid())
+  tenantId   String
+  tenant     Tenant        @relation(fields: [tenantId], references: [id])
+  customerId String
+  customer   Customer      @relation(fields: [customerId], references: [id])
+  contractId String?       @unique
+  contract   Contract?     @relation(fields: [contractId], references: [id])
+  status     InvoiceStatus @default(Draft)
+  cufe       String?
+  total      Decimal       @db.Decimal(14, 2)
+  vatTotal   Decimal       @db.Decimal(14, 2) @default(0)
+  createdAt  DateTime      @default(now())
+
+  lines InvoiceLine[]
+
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id        String  @id @default(uuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  itemId    String?
+  item      Item?   @relation(fields: [itemId], references: [id])
+  description String
+  price     Decimal @db.Decimal(14, 2)
+  vat       Decimal @db.Decimal(14, 2) @default(0)
+
+  @@map("invoice_lines")
+}
+
+// ---------- Security / audit ----------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  branchId  String?
+  entity    String
+  entityId  String
+  action    String
+  oldValue  Json?
+  newValue  Json?
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ---------- Configuration ----------
+
+enum InterestAccrualPolicy {
+  // Se cobra todo mes EMPEZADO: con 1 mes y 25 días de mora se cobran 2 meses.
+  // Es lo que hace el sistema legado, verificado contra dos contratos reales en
+  // docs/fuentes/2026-07-capturas-plus-cv-carrera113.md (RN-16, CV-029). Default.
+  FullMonthCeil
+  // Se cobra solo el mes CUMPLIDO: con 1 mes y 25 días se cobra 1. Política
+  // conservadora — cobra menos que el negocio real, nunca de más.
+  FullMonth
+  // El interés se causa proporcional a los días transcurridos.
+  ProRata
+}
+
+enum InterestRounding {
+  None
+  NearestPeso
+  NearestHundred
+}
+
+// Qué hacer cuando la tasa pactada supera el tope de usura configurado.
+//
+// No es una decisión técnica. El negocio de la Carrera 113 cobra 4% mensual, que
+// equivale a ~60% efectivo anual y muy probablemente supera la usura vigente —
+// exactamente el riesgo que describe docs/01-investigacion-negocio.md §1.2 (un
+// juez puede recalificar el contrato y aplicar el tope igual que a un préstamo).
+//
+// `Block` es lo legalmente conservador. `Warn` es el default porque un sistema
+// que se niega a registrar lo que el negocio realmente hace no corrige la
+// práctica: la devuelve al papel, donde nadie la audita. La decisión de cuál
+// usar es del negocio y su abogado, no del código.
+enum UsuryCapPolicy {
+  Block
+  Warn
+}
+
+model TenantConfiguration {
+  id                       String   @id @default(uuid())
+  tenantId                 String   @unique
+  tenant                   Tenant   @relation(fields: [tenantId], references: [id])
+  activeModules            Json     @default("{\"workshop\":false,\"layaway\":false,\"crm\":false,\"electronicBilling\":false,\"advancedCollections\":false,\"consignment\":false}")
+
+  // Tope legal de usura, expresado como tasa EFECTIVA ANUAL (la base en que la
+  // Superintendencia Financiera certifica el interés bancario corriente).
+  // Ojo: la tasa de un contrato es MENSUAL — nunca se comparan directamente,
+  // hay que convertir. Ver docs/12-gap-analysis-y-backlog.md (CV-015).
+  maxLegalRate             Decimal  @db.Decimal(6, 4) @default(0.1950)
+  usuryCapPolicy           UsuryCapPolicy @default(Warn)
+  gracePeriodDays          Int      @default(30)
+  defaultLoanablePercentage Decimal @db.Decimal(5, 2) @default(60.00)
+
+  // ---- Parámetros del ciclo de empeño (docs/11, RN-01, RN-02, RN-05, RN-13) ----
+
+  // Tasa mensual por defecto de un contrato nuevo. 0.0400 = 4% mensual, que es
+  // lo que cobra el negocio de la Carrera 113 de forma uniforme (RN-01).
+  defaultMonthlyInterestRate Decimal @db.Decimal(6, 4) @default(0.0400)
+  // Plazo base en meses de un contrato de empeño (RN-02).
+  defaultTermMonths          Int     @default(6)
+  // Antigüedad DESDE LA FIRMA a partir de la cual un contrato es candidato a
+  // remate. No es el vencimiento: el negocio deja correr los contratos bastante
+  // más allá del plazo antes de rematar, y la decisión es humana (RN-05).
+  forfeitureThresholdMonths  Int     @default(8)
+  interestAccrualPolicy      InterestAccrualPolicy @default(FullMonthCeil)
+  interestRounding           InterestRounding      @default(NearestHundred)
+
+  // Punto de partida del consecutivo de contratos, para continuar la numeración
+  // del sistema legado en vez de arrancar en 1 (RN-08, CV-008/CV-024).
+  contractNumberOffset       Int     @default(0)
+
+  @@map("tenant_configurations")
+}
