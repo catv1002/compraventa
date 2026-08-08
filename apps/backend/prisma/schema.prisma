@@ -403,6 +403,7 @@ enum ContractMovementType {
   PrincipalPayment
   Renewal
   Settlement
+  Return
 }
 
 model ContractMovement {

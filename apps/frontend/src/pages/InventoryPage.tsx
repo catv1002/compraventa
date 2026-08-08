@@ -78,6 +78,7 @@ const STATUS_LABELS: Record<string, string> = {
   InStock: 'Disponible',
   Sold: 'Vendido',
   Released: 'Liberado',
+  Returned: 'Devuelto (pendiente de revisión)',
 };
 
 /**
@@ -231,6 +232,53 @@ export function InventoryPage() {
       setError(err instanceof ApiError ? err.message : 'Error al ingresar el artículo'),
   });
 
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editDescription, setEditDescription] = useState('');
+  const [editSerialNumber, setEditSerialNumber] = useState('');
+  const [editWeightGrams, setEditWeightGrams] = useState('');
+  const [editKarats, setEditKarats] = useState(KARATS_DEFAULT);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const editingItem = items?.find((i) => i.id === editingItemId);
+  const editingCategory = (categories ?? []).find((c) => c.id === editingItem?.category.id);
+  const editWeightDefinition = definitionOf(editingCategory, 'weightGrams');
+  const editKaratsDefinition = definitionOf(editingCategory, 'karats');
+  const editKaratOptions = editKaratsDefinition?.values ?? KARATS_FALLBACK;
+
+  function openEdit(item: Item) {
+    setEditingItemId(item.id);
+    setEditDescription(item.description ?? '');
+    setEditSerialNumber(item.serialNumber ?? '');
+    setEditWeightGrams(item.attributes?.find((a) => a.key === 'weightGrams')?.value ?? '');
+    setEditKarats(item.attributes?.find((a) => a.key === 'karats')?.value ?? KARATS_DEFAULT);
+    setEditError(null);
+  }
+
+  const updateItem = useMutation({
+    mutationFn: () => {
+      const attributes: { key: string; value: string }[] = [];
+      if (editWeightDefinition) attributes.push({ key: 'weightGrams', value: editWeightGrams });
+      if (editKaratsDefinition) attributes.push({ key: 'karats', value: editKarats });
+
+      return api.patch(`/items/${editingItemId}`, {
+        description: editDescription || undefined,
+        serialNumber: editSerialNumber || undefined,
+        attributes: attributes.length > 0 ? attributes : undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      setEditingItemId(null);
+    },
+    onError: (err) =>
+      setEditError(err instanceof ApiError ? err.message : 'Error al corregir el artículo'),
+  });
+
+  const restockItem = useMutation({
+    mutationFn: (itemId: string) => api.post(`/items/${itemId}/restock`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['items'] }),
+  });
+
   const [appraisingItemId, setAppraisingItemId] = useState<string | null>(null);
   const [appraisedValue, setAppraisedValue] = useState('');
   const [loanablePercentage, setLoanablePercentage] = useState('60');
@@ -302,6 +350,20 @@ export function InventoryPage() {
                 </p>
               </div>
 
+              {item.status === 'Returned' && user?.role !== 'SalesAdvisor' && (
+                <button
+                  onClick={() => {
+                    if (window.confirm('¿El artículo está en condiciones de volver a la vitrina?')) {
+                      restockItem.mutate(item.id);
+                    }
+                  }}
+                  disabled={restockItem.isPending}
+                  className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Reponer a disponible
+                </button>
+              )}
+
               {item.status === 'Received' && (
                 <div>
                   {appraisingItemId === item.id ? (
@@ -350,12 +412,20 @@ export function InventoryPage() {
                       ) : null}
                     </div>
                   ) : (
-                    <button
-                      onClick={() => setAppraisingItemId(item.id)}
-                      className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-                    >
-                      Avaluar
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => openEdit(item)}
+                        className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => setAppraisingItemId(item.id)}
+                        className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Avaluar
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -471,6 +541,96 @@ export function InventoryPage() {
                 className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 {createItem.isPending ? 'Guardando…' : 'Ingresar artículo'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {editingItemId && (
+        <Modal title={`Corregir · ${editingItem?.category.name ?? ''}`} onClose={() => setEditingItemId(null)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setEditError(null);
+              updateItem.mutate();
+            }}
+            className="space-y-4"
+          >
+            {editWeightDefinition && (
+              <div>
+                <label className={labelClass} htmlFor="edit-peso">
+                  Peso en gramos
+                </label>
+                <input
+                  id="edit-peso"
+                  value={editWeightGrams}
+                  onChange={(e) => setEditWeightGrams(e.target.value)}
+                  type="number"
+                  step="0.01"
+                  min={editWeightDefinition.min ?? 0.01}
+                  className={inputClass}
+                  autoFocus
+                  required={editWeightDefinition.required}
+                />
+              </div>
+            )}
+            {editKaratsDefinition && (
+              <div>
+                <label className={labelClass} htmlFor="edit-quilataje">
+                  Quilataje
+                </label>
+                <select
+                  id="edit-quilataje"
+                  value={editKarats}
+                  onChange={(e) => setEditKarats(e.target.value)}
+                  className={inputClass}
+                >
+                  {editKaratOptions.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className={labelClass} htmlFor="edit-descripcion">
+                Novedades
+              </label>
+              <input
+                id="edit-descripcion"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="edit-serie">
+                Número de serie
+              </label>
+              <input
+                id="edit-serie"
+                value={editSerialNumber}
+                onChange={(e) => setEditSerialNumber(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            {editError && <p className="text-sm text-red-600">{editError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingItemId(null)}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={updateItem.isPending}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {updateItem.isPending ? 'Guardando…' : 'Guardar corrección'}
               </button>
             </div>
           </form>

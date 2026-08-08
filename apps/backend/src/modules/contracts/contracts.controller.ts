@@ -13,6 +13,7 @@ import { SettleContractDto } from './dto/settle-contract.dto';
 import { PayInstallmentDto } from './dto/pay-installment.dto';
 import { PayInterestDto } from './dto/pay-interest.dto';
 import { PayPrincipalDto } from './dto/pay-principal.dto';
+import { ReturnSaleDto } from './dto/return-sale.dto';
 
 @Controller('contracts')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -82,6 +83,14 @@ export class ContractsController {
   withdraw(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.contractsService.withdraw(id, user);
   }
+
+  @Post(':id/return-sale')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
+  @Audited('Contract', 'SaleReturned', { capturePrevious: true })
+  returnSale(@Param('id') id: string, @Body() dto: ReturnSaleDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.contractsService.returnSale(id, dto.cashRegisterId, user, dto.paymentMethod);
+  }
+
 
   /**
    * Cuánto debe el contrato hoy. Solo lectura — es la consulta que el operador

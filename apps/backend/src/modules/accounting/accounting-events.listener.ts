@@ -12,6 +12,7 @@ import {
   InterestPaymentRecordedEvent,
   ItemSoldEvent,
   RepairCompletedEvent,
+  SaleReturnedEvent,
 } from '../../shared/domain-events/events';
 
 // Traduce eventos de negocio de otros contextos en asientos contables
@@ -176,6 +177,31 @@ export class AccountingEventsListener {
     }
 
     await this.accountingService.postEntry(item.tenantId, DomainEventNames.ItemSold, lines);
+  }
+
+  // Reverso exacto de `onItemSold` — misma pieza, mismas cuentas, en el
+  // sentido contrario. El costo vuelve a inventario (1200) porque el
+  // artículo físico vuelve a estar disponible (`ContractsService.returnSale`
+  // ya lo transiciona a `Returned`).
+  @OnEvent(DomainEventNames.SaleReturned)
+  async onSaleReturned(event: SaleReturnedEvent) {
+    const item = await this.prisma.item.findUnique({ where: { id: event.itemId } });
+    if (!item) return;
+
+    const costBasis = Number(item.costBasis);
+
+    const lines = [
+      { accountCode: '4000', debit: event.price, branchId: item.branchId },
+      { accountCode: '1000', credit: event.price, branchId: item.branchId },
+    ];
+    if (costBasis > 0) {
+      lines.push(
+        { accountCode: '1200', debit: costBasis, branchId: item.branchId },
+        { accountCode: '5000', credit: costBasis, branchId: item.branchId },
+      );
+    }
+
+    await this.accountingService.postEntry(item.tenantId, DomainEventNames.SaleReturned, lines);
   }
 
   @OnEvent(DomainEventNames.RepairCompleted)

@@ -53,6 +53,7 @@ import {
   LayawayCancelledEvent,
   LayawayCompletedEvent,
   LayawayCreatedEvent,
+  SaleReturnedEvent,
 } from '../../shared/domain-events/events';
 
 // Reglas de negocio y transiciones de la máquina de estados de Contract —
@@ -462,6 +463,68 @@ export class ContractsService {
 
     return withdrawn;
   }
+
+  // Devolución de una venta ya cobrada (`ContractType.Sale`, `Settled`): el
+  // cliente trae la pieza de vuelta. Reversa el dinero (CashOut por el mismo
+  // `principalAmount` cobrado — ya neto de descuento), el artículo vuelve a
+  // `Returned` (no directo a `InStock`: alguien debe revisarlo antes de
+  // volver a ofrecerlo — ver `restockItem`), y el contrato queda `Cancelled`
+  // (la UI lo distingue como "Devuelto" por tipo, igual que "Retirado" para
+  // Pawn/DirectPurchase). No aplica a Pawn/DirectPurchase/Layaway — esos
+  // tienen sus propios mecanismos de reversa (withdraw, cancelLayaway).
+  async returnSale(
+    contractId: string,
+    cashRegisterId: string,
+    currentUser: AuthenticatedUser,
+    paymentMethod?: PaymentMethod,
+  ) {
+    const contract = await this.findOwned(contractId, currentUser);
+    if (!contract) {
+      throw new NotFoundException('Contrato no encontrado');
+    }
+    if (contract.contractType !== ContractType.Sale) {
+      throw new BadRequestException('Solo los contratos de venta admiten devolución');
+    }
+    if (contract.status !== ContractStatus.Settled) {
+      throw new BadRequestException(`El contrato no admite devolución en estado ${contract.status}`);
+    }
+    const item = await this.inventoryService.findOne(contract.itemId, currentUser);
+    if (item.status !== ItemStatus.Sold) {
+      throw new BadRequestException(
+        `El artículo no está en estado Sold (actual: ${item.status}) — no se puede devolver`,
+      );
+    }
+
+    const amount = Number(contract.principalAmount);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.contractMovement.create({
+        data: { contractId, type: ContractMovementType.Return, amount },
+      });
+      await this.cashService.recordMovement(
+        cashRegisterId,
+        {
+          type: CashMovementType.CashOut,
+          amount,
+          sourceType: 'Contract',
+          contractId,
+          paymentMethod: paymentMethod ?? PaymentMethod.Cash,
+        },
+        currentUser,
+        tx,
+      );
+      await tx.contract.update({ where: { id: contractId }, data: { status: ContractStatus.Cancelled } });
+      await tx.item.update({ where: { id: contract.itemId }, data: { status: ItemStatus.Returned } });
+    });
+
+    await this.eventEmitter.emitAsync(
+      DomainEventNames.SaleReturned,
+      new SaleReturnedEvent(contractId, contract.itemId, amount),
+    );
+
+    return this.findOne(contractId, currentUser);
+  }
+
 
   // Construye la entrada del motor de intereses a partir de un contrato
   // persistido. El capital vigente es principal - abonos a capital ya aplicados.

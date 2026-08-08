@@ -38,6 +38,10 @@ export class ItemSoldEvent {
   constructor(public readonly itemId: string, public readonly price: number, public readonly customerId: string) {}
 }
 
+export class SaleReturnedEvent {
+  constructor(public readonly contractId: string, public readonly itemId: string, public readonly price: number) {}
+}
+
 export class CashRegisterOpenedEvent {
   constructor(public readonly cashRegisterId: string, public readonly branchId: string, public readonly baseAmount: number) {}
 }
@@ -103,6 +107,7 @@ export const DomainEventNames = {
   ContractSettled: 'contract.settled',
   ContractDefaulted: 'contract.defaulted',
   ItemSold: 'item.sold',
+  SaleReturned: 'contract.sale-returned',
   CashRegisterOpened: 'cash-register.opened',
   CashMovementRecorded: 'cash-register.movement-recorded',
   CashRegisterClosed: 'cash-register.closed',

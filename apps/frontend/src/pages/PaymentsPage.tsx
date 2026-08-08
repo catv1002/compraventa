@@ -1,5 +1,6 @@
-import { FormEvent, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP, formatDate } from '../lib/format';
 import { Modal } from '../components/Modal';
@@ -104,7 +105,11 @@ function daysSince(iso: string): number {
 }
 
 export function PaymentsPage() {
-  const [term, setTerm] = useState('');
+  // `?q=` permite llegar directo desde otra pantalla (Contratos) con la
+  // búsqueda ya hecha — evita retipear el número de préstamo que esa otra
+  // pantalla ya tenía a la vista.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [term, setTerm] = useState(searchParams.get('q') ?? '');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -132,6 +137,19 @@ export function PaymentsPage() {
   }, [contracts, term]);
 
   const selected = (contracts ?? []).find((c) => c.id === selectedId) ?? null;
+
+  // Si se llegó con `?q=` (desde Contratos), abre directo el préstamo si hay
+  // un único resultado operable — mismo criterio que Enter en la búsqueda
+  // manual (handleSearch), pero disparado una vez que los contratos cargan.
+  useEffect(() => {
+    if (!searchParams.get('q') || !contracts) return;
+    const operables = matches.filter((c) => businessStatus(c).operable);
+    if (operables.length === 1) {
+      setSelectedId(operables[0].id);
+    }
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts]);
 
   function handleSearch(e: FormEvent) {
     e.preventDefault();

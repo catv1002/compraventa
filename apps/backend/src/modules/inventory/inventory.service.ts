@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
 import { DomainEventNames, ItemReceivedEvent } from '../../shared/domain-events/events';
 import { resolveAttributeSchema, validateItemAttributes } from './attributes/attribute-validator';
 
@@ -144,6 +145,66 @@ export class InventoryService {
     }
 
     return item;
+  }
+
+  // Corrige un error de captura (peso/quilataje/descripción/serie) — SOLO
+  // mientras el artículo sigue en `Received`. Una vez avaluado (`Appraised`)
+  // el peso ya alimentó un `Appraisal.appraisedValue` y potencialmente un
+  // `Contract`; cambiarlo después dejaría el avalúo/contrato calculado sobre
+  // un dato que ya no es el vigente, sin ninguna pista de que divergieron.
+  // Para ese caso el camino correcto es retirar/anular el contrato, no editar
+  // el artículo por debajo — ver ContractsService.withdraw().
+  async updateItem(id: string, dto: UpdateItemDto, currentUser: AuthenticatedUser) {
+    const item = await this.prisma.item.findFirst({
+      where: { id, tenantId: currentUser.tenantId },
+      include: { category: { include: { parentCategory: true } } },
+    });
+    if (!item) {
+      throw new NotFoundException('Artículo no encontrado');
+    }
+    if (item.status !== ItemStatus.Received) {
+      throw new BadRequestException(
+        `Solo se puede editar un artículo en estado Received (actual: ${item.status})`,
+      );
+    }
+
+    if (dto.attributes) {
+      const schema = resolveAttributeSchema(
+        item.category.attributeSchema,
+        item.category.parentCategory?.attributeSchema,
+      );
+      const validation = validateItemAttributes(dto.attributes, schema, item.category.name);
+      if (!validation.ok) {
+        throw new BadRequestException(validation.errors);
+      }
+      await this.prisma.$transaction([
+        this.prisma.dynamicAttribute.deleteMany({ where: { itemId: id } }),
+        this.prisma.dynamicAttribute.createMany({
+          data: validation.attributes.map((a) => ({ ...a, itemId: id })),
+        }),
+      ]);
+    }
+
+    return this.prisma.item.update({
+      where: { id },
+      data: {
+        serialNumber: dto.serialNumber,
+        description: dto.description,
+      },
+      include: { attributes: true, category: true, photos: true },
+    });
+  }
+
+  // El artículo devuelto (`ItemStatus.Returned`, ver ContractsService.returnSale)
+  // no vuelve solo a la vitrina: alguien con autoridad de sucursal confirma
+  // que está en condiciones de venderse de nuevo antes de que reaparezca en
+  // inventario disponible.
+  async restockItem(id: string, currentUser: AuthenticatedUser) {
+    const item = await this.findOne(id, currentUser);
+    if (item.status !== ItemStatus.Returned) {
+      throw new BadRequestException(`El artículo no está en estado Returned (actual: ${item.status})`);
+    }
+    return this.transitionStatus(id, ItemStatus.InStock);
   }
 
   // Usado internamente por Appraisals/Contracts para mover el artículo en su
