@@ -32,7 +32,7 @@ docker run -d --name compraventa-postgres -e POSTGRES_PASSWORD=postgres -e POSTG
 # si usas el puerto 5433, actualiza DATABASE_URL en .env para que apunte a localhost:5433
 npx prisma migrate dev --name init
 npx ts-node prisma/seed.ts         # crea tenant/sucursal/usuario admin de prueba
-npm run start:dev                  # http://localhost:3000
+npm run start:dev                  # http://localhost:3100
 
 # Frontend (otra terminal)
 cd apps/frontend
@@ -41,6 +41,19 @@ npm run dev                        # http://localhost:5173
 ```
 
 Usuario de prueba creado por el seed: `admin@compraventa.demo` / `admin1234`.
+
+Tip: si no quieres tener el teléfono a mano en cada login local, pon `MFA_BYPASS=true` en `apps/backend/.env` — solo tiene efecto si `NODE_ENV` no es `production` (ver `auth.service.ts`).
+
+## Despliegue
+
+Staging y producción son el mismo stack (Railway + Cloudflare Pages), separados por rama y por ambiente — no hay infraestructura duplicada que mantener. Guía paso a paso completa en [DEPLOYMENT.md](DEPLOYMENT.md).
+
+| Rama | Backend (Railway) | Frontend (Cloudflare Pages) |
+|---|---|---|
+| `develop` | Ambiente **Staging**, su propia Postgres | Preview deployment automático |
+| `main` | Ambiente **Production**, su propia Postgres | Deployment de producción |
+
+`main` todavía no existe en este repo — se crea desde `develop` cuando el negocio esté listo para salir a producción real (ver DEPLOYMENT.md).
 
 ## Qué cubre Fase 1 (MVP)
 
