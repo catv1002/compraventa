@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CashMovementType, CashRegisterStatus, ContractType, ItemStatus } from '@prisma/client';
+import { CashMovementType, CashRegisterStatus, ContractMovementType, ContractType, ItemStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { DailyCloseQueryDto } from './dto/daily-close-query.dto';
@@ -61,7 +61,8 @@ export class ReportsService {
       gastosDelDia,
       dineroDisponible,
       valorInventarioAlCierre,
-      utilidadEstimadaDelDia,
+      utilidadVentaDelDia,
+      utilidadInteresEmpenoDelDia,
       diferenciaCajaPendiente,
     ] = await Promise.all([
       this.comprasDelDia(branchId, from, to),
@@ -71,7 +72,8 @@ export class ReportsService {
       this.gastosDelDia(branchId, from, to),
       this.dineroDisponible(branchId),
       this.valorInventarioAlCierre(currentUser.tenantId, branchId),
-      this.utilidadEstimadaDelDia(currentUser.tenantId, branchId, from, to),
+      this.utilidadVentaDelDia(currentUser.tenantId, branchId, from, to),
+      this.utilidadInteresEmpenoDelDia(currentUser.tenantId, branchId, from, to),
       this.diferenciaCajaPendiente(branchId),
     ]);
 
@@ -83,7 +85,14 @@ export class ReportsService {
       ingresosTotalesDelDia,
       egresosTotalesDelDia,
       gastosDelDia,
-      utilidadEstimadaDelDia,
+      // Desglosada porque son dos negocios distintos (venta de mostrador vs.
+      // sobrecosto de empeño liquidado) — sumarlas a ciegas en un solo número
+      // fue justo lo que una auditoría contable marcó como engañoso: el total
+      // sigue disponible para quien solo quiera "cuánto gané hoy", pero ahora
+      // sí incluye el interés cobrado, no solo la venta directa.
+      utilidadVentaDelDia,
+      utilidadInteresEmpenoDelDia,
+      utilidadEstimadaDelDia: utilidadVentaDelDia + utilidadInteresEmpenoDelDia,
       dineroDisponible,
       // Foto de AHORA, no reconstruida para `dateStr`: el inventario no se
       // versiona por fecha, así que el desglose siempre refleja el estado
@@ -237,14 +246,10 @@ export class ReportsService {
   }
 
   /**
-   * Utilidad ESTIMADA del día: solo cubre contratos `Sale` directos
-   * (`principalAmount - item.costBasis`). NO incluye el interés/sobrecosto
-   * devengado en liquidaciones de `Pawn` — ese es un concepto distinto
-   * (devengo de intereses, RN de la calculadora de intereses) y mezclarlo
-   * aquí distorsionaría ambas cifras. Una futura iteración puede sumar esa
-   * utilidad de empeño liquidado como una línea aparte.
+   * Utilidad de venta directa (`ContractType.Sale`): `principalAmount -
+   * item.costBasis`. No incluye empeño — ver `utilidadInteresEmpenoDelDia`.
    */
-  private async utilidadEstimadaDelDia(tenantId: string, branchId: string, from: Date, to: Date): Promise<number> {
+  private async utilidadVentaDelDia(tenantId: string, branchId: string, from: Date, to: Date): Promise<number> {
     const sales = await this.prisma.contract.findMany({
       where: {
         tenantId,
@@ -255,6 +260,30 @@ export class ReportsService {
       select: { principalAmount: true, item: { select: { costBasis: true } } },
     });
     return sales.reduce((sum, sale) => sum + (Number(sale.principalAmount) - Number(sale.item.costBasis)), 0);
+  }
+
+  /**
+   * Utilidad de empeño liquidado el día consultado: el sobrecosto
+   * (interés) cobrado al liquidar, `ContractMovement.amount - principalAmount`
+   * por cada `Settlement` de un contrato `Pawn` en el rango. El capital
+   * liquidado no es utilidad (es la devolución del préstamo), solo el
+   * sobrecosto lo es — mismo criterio que ya usa `onContractSettled` en el
+   * listener contable (`settlementAmount - principalAmount`), aquí aplicado
+   * como reporte de lectura, no como asiento.
+   */
+  private async utilidadInteresEmpenoDelDia(tenantId: string, branchId: string, from: Date, to: Date): Promise<number> {
+    const settlements = await this.prisma.contractMovement.findMany({
+      where: {
+        type: ContractMovementType.Settlement,
+        movementDate: { gte: from, lte: to },
+        contract: { tenantId, branchId, contractType: ContractType.Pawn },
+      },
+      select: { amount: true, contract: { select: { principalAmount: true } } },
+    });
+    return settlements.reduce(
+      (sum, s) => sum + (Number(s.amount) - Number(s.contract.principalAmount)),
+      0,
+    );
   }
 
   /**

@@ -358,14 +358,22 @@ export function ContractsPage() {
                 {contract.status === 'Created' && (
                   <>
                     <button
-                      onClick={() => disburseContract.mutate(contract.id)}
+                      onClick={() => {
+                        if (window.confirm(`¿Desembolsar ${formatCOP(contract.principalAmount)} de la caja? Esto mueve dinero real y no se puede deshacer.`)) {
+                          disburseContract.mutate(contract.id);
+                        }
+                      }}
                       disabled={!register}
                       className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
                     >
                       Desembolsar
                     </button>
                     <button
-                      onClick={() => withdrawContract.mutate(contract.id)}
+                      onClick={() => {
+                        if (window.confirm('¿Retirar este contrato? El cliente no se queda con el préstamo y no se puede deshacer.')) {
+                          withdrawContract.mutate(contract.id);
+                        }
+                      }}
                       className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
                     >
                       Retirar

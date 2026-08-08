@@ -365,6 +365,13 @@ model Contract {
   // rastro de lo que sigue en mora, y hace verificable "estar al día" (RN-03).
   interestPaidThrough  DateTime?
 
+  // Hasta qué fecha el interés YA quedó reconocido como ingreso en la
+  // contabilidad (asiento 1150/4100), independiente de si el cliente lo pagó
+  // o no. Distinto de `interestPaidThrough`: ese es dinero en caja, este es
+  // causación NIIF-PYME (Sección 2.36) — el ingreso se reconoce cuando se
+  // devenga, no cuando se cobra. Null = nunca se ha causado nada todavía.
+  interestAccruedThrough DateTime?
+
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

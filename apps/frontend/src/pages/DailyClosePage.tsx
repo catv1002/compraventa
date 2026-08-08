@@ -25,6 +25,8 @@ interface DailyClose {
   ingresosTotalesDelDia: number;
   egresosTotalesDelDia: number;
   gastosDelDia: number;
+  utilidadVentaDelDia: number;
+  utilidadInteresEmpenoDelDia: number;
   utilidadEstimadaDelDia: number;
   dineroDisponible: { monto: number; cashRegisterId: string } | null;
   valorInventarioAlCierre: { disponible: number; comprometido: number; enProceso: number; total: number };
@@ -140,9 +142,11 @@ export function DailyClosePage() {
             <Tarjeta titulo="Egresos totales" valor={formatCOP(data.egresosTotalesDelDia)} />
             <Tarjeta titulo="Gastos del día" valor={formatCOP(data.gastosDelDia)} />
             <Tarjeta
-              titulo="Utilidad estimada (venta)"
+              titulo="Utilidad estimada (total)"
               valor={formatCOP(data.utilidadEstimadaDelDia)}
-              detalle="Solo ventas directas; no incluye intereses de empeño liquidado."
+              detalle={`Venta ${formatCOP(data.utilidadVentaDelDia)} · Interés de empeño liquidado ${formatCOP(
+                data.utilidadInteresEmpenoDelDia,
+              )}`}
             />
             <Tarjeta
               titulo="Dinero disponible ahora"

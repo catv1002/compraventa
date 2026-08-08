@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { CashMovementType, CashRegisterStatus, Prisma } from '@prisma/client';
+import { CashMovementType, CashRegisterStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { OpenRegisterDto } from './dto/open-register.dto';
@@ -128,19 +128,39 @@ export class CashService {
     return movement;
   }
 
+  // La diferencia de caja la calcula el servidor, nunca el cliente: el
+  // cajero solo aporta el dato que solo él puede aportar —cuánto efectivo
+  // hay físicamente en el cajón— y el sistema lo compara contra lo que
+  // debería haber según sus propios movimientos. Antes se guardaba
+  // `dto.discrepancy` tal cual llegaba, así que un cajero podía cerrar con
+  // "0" sin haber contado nada.
+  //
+  // Solo movimientos en EFECTIVO entran al esperado: una venta por
+  // transferencia/tarjeta no pasa por el cajón físico, así que compararla
+  // contra el conteo de billetes produciría una diferencia falsa.
   async closeRegister(id: string, dto: CloseRegisterDto, currentUser: AuthenticatedUser) {
     const register = await this.prisma.cashRegister.findFirst({
       where: { id, branch: { tenantId: currentUser.tenantId } },
+      include: { movements: true },
     });
     if (!register) {
       throw new NotFoundException('Caja no encontrada');
     }
 
+    const cashIn = register.movements
+      .filter((m) => m.type === CashMovementType.CashIn && m.paymentMethod === PaymentMethod.Cash)
+      .reduce((sum, m) => sum + Number(m.amount), 0);
+    const cashOut = register.movements
+      .filter((m) => m.type === CashMovementType.CashOut && m.paymentMethod === PaymentMethod.Cash)
+      .reduce((sum, m) => sum + Number(m.amount), 0);
+    const expectedCash = Number(register.baseAmount) + cashIn - cashOut;
+    const discrepancy = Math.round((dto.physicalCount - expectedCash + Number.EPSILON) * 100) / 100;
+
     await this.prisma.cashCount.create({
       data: {
         cashRegisterId: id,
-        discrepancy: dto.discrepancy,
-        resolutionStatus: dto.discrepancy === 0 ? 'Resolved' : 'Pending',
+        discrepancy,
+        resolutionStatus: discrepancy === 0 ? 'Resolved' : 'Pending',
       },
     });
 
@@ -151,10 +171,10 @@ export class CashService {
 
     await this.eventEmitter.emitAsync(
       DomainEventNames.CashRegisterClosed,
-      new CashRegisterClosedEvent(id, dto.discrepancy),
+      new CashRegisterClosedEvent(id, discrepancy),
     );
 
-    return closed;
+    return { ...closed, expectedCash, physicalCount: dto.physicalCount, discrepancy };
   }
 
   /**

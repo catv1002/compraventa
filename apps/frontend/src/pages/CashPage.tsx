@@ -14,6 +14,11 @@ interface CashRegister {
   status: string;
   movements: CashMovement[];
 }
+interface CloseRegisterResult {
+  expectedCash: number;
+  physicalCount: number;
+  discrepancy: number;
+}
 
 export function CashPage() {
   const queryClient = useQueryClient();
@@ -23,17 +28,27 @@ export function CashPage() {
   });
 
   const [baseAmount, setBaseAmount] = useState('');
-  const [discrepancy, setDiscrepancy] = useState('0');
+  const [physicalCount, setPhysicalCount] = useState('');
+  const [closeResult, setCloseResult] = useState<CloseRegisterResult | null>(null);
 
   const openRegister = useMutation({
     mutationFn: () => api.post('/cash-registers/open', { baseAmount: Number(baseAmount) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cash-current'] }),
   });
 
+  // La diferencia ya no se digita: el cajero solo cuenta el efectivo físico
+  // del cajón y el servidor calcula cuánto debería haber contra sus propios
+  // movimientos (`CashService.closeRegister`).
   const closeRegister = useMutation({
     mutationFn: () =>
-      api.post(`/cash-registers/${register?.id}/close`, { discrepancy: Number(discrepancy) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cash-current'] }),
+      api.post<CloseRegisterResult>(`/cash-registers/${register?.id}/close`, {
+        physicalCount: Number(physicalCount),
+      }),
+    onSuccess: (result) => {
+      setCloseResult(result);
+      setPhysicalCount('');
+      queryClient.invalidateQueries({ queryKey: ['cash-current'] });
+    },
   });
 
   function handleOpen(e: FormEvent) {
@@ -85,21 +100,43 @@ export function CashPage() {
 
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <h3 className="mb-2 text-sm font-medium text-slate-700">Cierre / arqueo</h3>
+            <p className="mb-2 text-xs text-slate-500">
+              Cuenta el efectivo físico del cajón y escríbelo aquí — la diferencia la calcula el sistema, no la digites tú.
+            </p>
             <div className="flex gap-2">
               <input
-                value={discrepancy}
-                onChange={(e) => setDiscrepancy(e.target.value)}
-                placeholder="Diferencia detectada"
+                value={physicalCount}
+                onChange={(e) => setPhysicalCount(e.target.value)}
+                placeholder="Efectivo contado en el cajón"
                 type="number"
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
               <button
-                onClick={() => closeRegister.mutate()}
-                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                onClick={() => {
+                  if (physicalCount && window.confirm('¿Cerrar la caja con este conteo? No se puede deshacer.')) {
+                    closeRegister.mutate();
+                  }
+                }}
+                disabled={!physicalCount || closeRegister.isPending}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 Cerrar caja
               </button>
             </div>
+            {closeResult && (
+              <div
+                className={`mt-3 rounded-md p-3 text-sm ${
+                  closeResult.discrepancy === 0
+                    ? 'bg-emerald-50 text-emerald-800'
+                    : 'bg-amber-50 text-amber-900'
+                }`}
+              >
+                Esperado: ${closeResult.expectedCash.toLocaleString('es-CO')} · Contado: $
+                {closeResult.physicalCount.toLocaleString('es-CO')} · Diferencia: $
+                {closeResult.discrepancy.toLocaleString('es-CO')}
+                {closeResult.discrepancy !== 0 && ' — queda pendiente de resolver antes de abrir la próxima caja.'}
+              </div>
+            )}
           </div>
 
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
