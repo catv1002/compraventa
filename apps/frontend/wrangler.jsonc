@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "compraventa-frontend",
+  "compatibility_date": "2026-01-01",
+  "assets": {
+    // El build de Vite (npm run build) ya deja todo en dist/ — Wrangler solo
+    // lo sirve como sitio estático, sin Worker script propio.
+    "directory": "./dist",
+    // Equivalente al _redirects de Pages: cualquier ruta que no sea un
+    // archivo estático cae en index.html, para que React Router funcione
+    // al refrescar en /contratos, /clientes, etc.
+    "not_found_handling": "single-page-application"
+  }
+}
