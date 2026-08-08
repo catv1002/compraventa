@@ -61,6 +61,7 @@ function buildHarness(contracts: ReturnType<typeof buildContract>[]) {
     prisma as any,
     inventoryService as any,
     {} as any,
+    {} as any,
     eventEmitter as any,
   );
 

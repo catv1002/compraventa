@@ -2,6 +2,9 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
+import { Modal } from '../components/Modal';
+import { Receipt, ReceiptData } from '../components/Receipt';
+import { TicketReceipt, TicketReceiptData } from '../components/TicketReceipt';
 
 interface Customer {
   id: string;
@@ -61,6 +64,13 @@ function statusLabel(contract: Contract) {
   return STATUS_LABELS[contract.status] ?? contract.status;
 }
 
+const PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: 'Cash', label: 'Efectivo' },
+  { value: 'Transfer', label: 'Transferencia' },
+  { value: 'Card', label: 'Tarjeta' },
+  { value: 'Other', label: 'Otro' },
+];
+
 export function ContractsPage() {
   const queryClient = useQueryClient();
   const { data: contracts } = useQuery({ queryKey: ['contracts'], queryFn: () => api.get<Contract[]>('/contracts') });
@@ -69,16 +79,37 @@ export function ContractsPage() {
     queryKey: ['items', 'Appraised'],
     queryFn: () => api.get<Item[]>('/items?status=Appraised'),
   });
+  const { data: inStockItems } = useQuery({
+    queryKey: ['items', 'InStock'],
+    queryFn: () => api.get<Item[]>('/items?status=InStock'),
+  });
   const { data: register } = useQuery({
     queryKey: ['cash-current'],
     queryFn: () => api.get<CashRegister | null>('/cash-registers/current'),
   });
 
+  const [contractType, setContractType] = useState<'Pawn' | 'Sale'>('Pawn');
   const [customerId, setCustomerId] = useState('');
   const [itemId, setItemId] = useState('');
   const [purchaseValue, setPurchaseValue] = useState('');
   const [retroventaRate, setRetroventaRate] = useState('4');
   const [dueDate, setDueDate] = useState('');
+  const [discountAmount, setDiscountAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [receiptContractId, setReceiptContractId] = useState<string | null>(null);
+  const [receiptTicketId, setReceiptTicketId] = useState<string | null>(null);
+
+  // Carrito del ticket de venta de mostrador (Option B): varios artículos, un
+  // Contract Sale por línea, agrupados por saleTicketId al cobrar. Ver
+  // ContractsService.createSaleTicket.
+  interface CartLine {
+    itemId: string;
+    description: string;
+    principalAmount: number;
+    discountAmount: number;
+  }
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const cartTotal = cart.reduce((sum, l) => sum + l.principalAmount, 0);
 
   const createContract = useMutation({
     mutationFn: () =>
@@ -92,8 +123,53 @@ export function ContractsPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
+      queryClient.invalidateQueries({ queryKey: ['items'] });
       setPurchaseValue('');
       setDueDate('');
+      setItemId('');
+    },
+  });
+
+  function addToCart() {
+    const item = inStockItems?.find((i) => i.id === itemId);
+    if (!item || !purchaseValue) return;
+    setCart((prev) => [
+      ...prev,
+      {
+        itemId,
+        description: item.description ?? item.id.slice(0, 8),
+        principalAmount: Number(purchaseValue),
+        discountAmount: discountAmount ? Number(discountAmount) : 0,
+      },
+    ]);
+    setItemId('');
+    setPurchaseValue('');
+    setDiscountAmount('');
+  }
+
+  function removeFromCart(index: number) {
+    setCart((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  const createSaleTicket = useMutation({
+    mutationFn: () =>
+      api.post<{ saleTicketId: string }>('/contracts/sale-tickets', {
+        customerId,
+        cashRegisterId: register?.id,
+        paymentMethod,
+        items: cart.map((l) => ({
+          itemId: l.itemId,
+          principalAmount: l.principalAmount,
+          discountAmount: l.discountAmount || undefined,
+        })),
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['contracts'] });
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['cash-current'] });
+      setCart([]);
+      setPaymentMethod('Cash');
+      setReceiptTicketId(data.saleTicketId);
     },
   });
 
@@ -115,7 +191,11 @@ export function ContractsPage() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    createContract.mutate();
+    if (contractType === 'Sale') {
+      addToCart();
+    } else {
+      createContract.mutate();
+    }
   }
 
   return (
@@ -132,6 +212,23 @@ export function ContractsPage() {
         </p>
       )}
 
+      <div className="mb-2 flex gap-2">
+        <button
+          type="button"
+          onClick={() => { setContractType('Pawn'); setItemId(''); }}
+          className={`rounded-md px-3 py-1 text-sm ${contractType === 'Pawn' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
+        >
+          Empeño
+        </button>
+        <button
+          type="button"
+          onClick={() => { setContractType('Sale'); setItemId(''); }}
+          className={`rounded-md px-3 py-1 text-sm ${contractType === 'Sale' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
+        >
+          Venta de mostrador
+        </button>
+      </div>
+
       <form onSubmit={handleSubmit} className="mb-6 grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-5">
         <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className="rounded-md border border-slate-300 px-3 py-2 text-sm" required>
           <option value="">Cliente…</option>
@@ -140,23 +237,101 @@ export function ContractsPage() {
           ))}
         </select>
         <select value={itemId} onChange={(e) => setItemId(e.target.value)} className="rounded-md border border-slate-300 px-3 py-2 text-sm" required>
-          <option value="">Artículo avaluado…</option>
-          {appraisedItems?.map((i) => (
+          <option value="">{contractType === 'Sale' ? 'Artículo en inventario…' : 'Artículo avaluado…'}</option>
+          {(contractType === 'Sale' ? inStockItems : appraisedItems)?.map((i) => (
             <option key={i.id} value={i.id}>{i.description ?? i.id.slice(0, 8)}</option>
           ))}
         </select>
-        <input value={purchaseValue} onChange={(e) => setPurchaseValue(e.target.value)} placeholder="Valor de compra" type="number" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
-        <input value={retroventaRate} onChange={(e) => setRetroventaRate(e.target.value)} placeholder="% Retroventa mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
-        {/* Opcional: si se deja vacío, el servidor aplica el plazo configurado
-            (6 meses por defecto, RN-02) en vez de exigir que se teclee. */}
-        <input value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" title="Vencimiento (opcional)" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <button type="submit" disabled={createContract.isPending} className="col-span-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 md:col-span-1">
-          Crear contrato
+        <input
+          value={purchaseValue}
+          onChange={(e) => setPurchaseValue(e.target.value)}
+          placeholder={contractType === 'Sale' ? 'Precio de venta' : 'Valor de compra'}
+          type="number"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+          required
+        />
+        {contractType === 'Pawn' ? (
+          <>
+            <input value={retroventaRate} onChange={(e) => setRetroventaRate(e.target.value)} placeholder="% Retroventa mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
+            {/* Opcional: si se deja vacío, el servidor aplica el plazo configurado
+                (6 meses por defecto, RN-02) en vez de exigir que se teclee. */}
+            <input value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" title="Vencimiento (opcional)" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+          </>
+        ) : (
+          <input
+            value={discountAmount}
+            onChange={(e) => setDiscountAmount(e.target.value)}
+            placeholder="Descuento (opcional)"
+            type="number"
+            min={0}
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+          />
+        )}
+        <button
+          type="submit"
+          disabled={createContract.isPending || !customerId || !itemId || !purchaseValue}
+          className="col-span-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 md:col-span-1"
+        >
+          {contractType === 'Sale' ? 'Agregar al ticket' : 'Crear contrato'}
         </button>
+        {contractType === 'Sale' && !register && (
+          <p className="col-span-full text-xs text-amber-700">Se necesita la caja abierta para cobrar el ticket.</p>
+        )}
       </form>
 
       {createContract.isError && (
         <p className="mb-4 text-sm text-red-600">{(createContract.error as ApiError).message}</p>
+      )}
+
+      {contractType === 'Sale' && cart.length > 0 && (
+        <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4">
+          <p className="mb-2 text-sm font-medium text-slate-800">Ticket en curso</p>
+          <table className="mb-3 w-full text-sm">
+            <tbody>
+              {cart.map((line, i) => (
+                <tr key={`${line.itemId}-${i}`} className="border-b border-slate-100">
+                  <td className="py-1 text-slate-700">{line.description}</td>
+                  <td className="py-1 text-right text-slate-800">{formatCOP(line.principalAmount)}</td>
+                  <td className="w-8 py-1 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(i)}
+                      className="text-slate-400 hover:text-red-600"
+                      aria-label="Quitar del ticket"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-900">Total: {formatCOP(cartTotal)}</p>
+            <div className="flex items-center gap-2">
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => createSaleTicket.mutate()}
+                disabled={!register || !customerId || createSaleTicket.isPending}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                Cobrar ticket
+              </button>
+            </div>
+          </div>
+          {createSaleTicket.isError && (
+            <p className="mt-2 text-sm text-red-600">{(createSaleTicket.error as ApiError).message}</p>
+          )}
+        </div>
       )}
 
       <div className="space-y-2">
@@ -205,6 +380,17 @@ export function ContractsPage() {
                     {openContractId === contract.id ? 'Cerrar' : 'Estado de cuenta'}
                   </button>
                 )}
+                {/* Comprobante disponible para cualquier contrato que ya movió
+                    caja — es lo mínimo que pide la auditoría para Sale, y no
+                    cuesta nada extenderlo a los demás tipos ya liquidados. */}
+                {contract.status !== 'Created' && contract.status !== 'Cancelled' && (
+                  <button
+                    onClick={() => setReceiptContractId(contract.id)}
+                    className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    Comprobante
+                  </button>
+                )}
               </div>
             </div>
 
@@ -218,8 +404,50 @@ export function ContractsPage() {
           </div>
         ))}
       </div>
+
+      {receiptContractId && (
+        <Modal title="Comprobante" onClose={() => setReceiptContractId(null)}>
+          <ReceiptLoader contractId={receiptContractId} />
+        </Modal>
+      )}
+
+      {receiptTicketId && (
+        <Modal title="Comprobante del ticket" onClose={() => setReceiptTicketId(null)}>
+          <TicketReceiptLoader saleTicketId={receiptTicketId} />
+        </Modal>
+      )}
     </div>
   );
+}
+
+function ReceiptLoader({ contractId }: { contractId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['contract-receipt', contractId],
+    queryFn: () => api.get<ReceiptData>(`/contracts/${contractId}/receipt`),
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-slate-500">Cargando comprobante…</p>;
+  }
+  if (error || !data) {
+    return <p className="text-sm text-red-600">{(error as ApiError)?.message ?? 'No se pudo cargar el comprobante'}</p>;
+  }
+  return <Receipt data={data} />;
+}
+
+function TicketReceiptLoader({ saleTicketId }: { saleTicketId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['sale-ticket-receipt', saleTicketId],
+    queryFn: () => api.get<TicketReceiptData>(`/contracts/sale-tickets/${saleTicketId}/receipt`),
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-slate-500">Cargando comprobante…</p>;
+  }
+  if (error || !data) {
+    return <p className="text-sm text-red-600">{(error as ApiError)?.message ?? 'No se pudo cargar el comprobante'}</p>;
+  }
+  return <TicketReceipt data={data} />;
 }
 
 /**

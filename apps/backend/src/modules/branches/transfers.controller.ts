@@ -28,8 +28,8 @@ export class TransfersController {
   @Post(':id/dispatch')
   @Roles(UserRole.BranchManager, UserRole.Admin)
   @Audited('BranchTransfer', 'TransferDispatched')
-  dispatch(@Param('id') id: string) {
-    return this.transfersService.dispatch(id);
+  dispatch(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.transfersService.dispatch(id, user);
   }
 
   @Post(':id/receive')
@@ -42,7 +42,7 @@ export class TransfersController {
   @Post(':id/cancel')
   @Roles(UserRole.BranchManager, UserRole.Admin)
   @Audited('BranchTransfer', 'TransferCancelled')
-  cancel(@Param('id') id: string) {
-    return this.transfersService.cancel(id);
+  cancel(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.transfersService.cancel(id, user);
   }
 }

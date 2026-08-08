@@ -39,13 +39,16 @@ export class AuditInterceptor implements NestInterceptor {
     // cliente esperando en el mostrador por un problema de auditoría es peor—
     // pero queda constancia de que no se pudo capturar.
     let oldValue: unknown = undefined;
-    if (meta.capturePrevious && request.params?.id) {
+    // TenantConfiguration no tiene :id en la ruta (es un recurso por-tenant,
+    // no por-registro) — se usa el tenantId del usuario autenticado en su
+    // lugar para poder capturar el estado previo igual.
+    const snapshotId =
+      request.params?.id ?? (meta.entity === 'TenantConfiguration' ? user?.tenantId : undefined);
+    if (meta.capturePrevious && snapshotId) {
       try {
-        oldValue = await this.auditService.loadSnapshot(meta.entity, request.params.id);
+        oldValue = await this.auditService.loadSnapshot(meta.entity, snapshotId);
       } catch (error) {
-        this.logger.error(
-          `No se pudo capturar el estado previo de ${meta.entity} ${request.params.id}: ${error}`,
-        );
+        this.logger.error(`No se pudo capturar el estado previo de ${meta.entity} ${snapshotId}: ${error}`);
       }
     }
 

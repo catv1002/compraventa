@@ -15,35 +15,35 @@ export class WorkshopController {
   constructor(private readonly workshopService: WorkshopService) {}
 
   @Post()
-  @Roles(UserRole.Technician, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('RepairOrder', 'ItemSentToWorkshop')
   create(@Body() dto: CreateRepairOrderDto, @CurrentUser() user: AuthenticatedUser) {
     return this.workshopService.create(dto, user);
   }
 
   @Get()
-  findAll() {
-    return this.workshopService.findAll();
+  findAll(@CurrentUser() user: AuthenticatedUser) {
+    return this.workshopService.findAll(user);
   }
 
   @Post(':id/spare-parts')
-  @Roles(UserRole.Technician, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.Admin)
   @Audited('RepairOrder', 'SparePartAdded')
-  addSparePart(@Param('id') id: string, @Body() dto: AddSparePartDto) {
-    return this.workshopService.addSparePart(id, dto);
+  addSparePart(@Param('id') id: string, @Body() dto: AddSparePartDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.workshopService.addSparePart(id, dto, user);
   }
 
   @Post(':id/complete')
-  @Roles(UserRole.Technician, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('RepairOrder', 'RepairCompleted')
-  complete(@Param('id') id: string) {
-    return this.workshopService.complete(id);
+  complete(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.workshopService.complete(id, user);
   }
 
   @Post(':id/cancel')
-  @Roles(UserRole.Technician, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('RepairOrder', 'RepairCancelled')
-  cancel(@Param('id') id: string) {
-    return this.workshopService.cancel(id);
+  cancel(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.workshopService.cancel(id, user);
   }
 }

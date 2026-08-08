@@ -1,4 +1,5 @@
-import { IsNumber, IsString, Min } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { PaymentMethod } from '@prisma/client';
 
 export class PayInstallmentDto {
   @IsNumber()
@@ -7,4 +8,8 @@ export class PayInstallmentDto {
 
   @IsString()
   cashRegisterId: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

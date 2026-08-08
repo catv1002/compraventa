@@ -1,4 +1,5 @@
-import { IsNumber, IsString, Min } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { PaymentMethod } from '@prisma/client';
 
 /**
  * Abono a capital de un contrato de empeño (RN-03 / CV-007).
@@ -14,4 +15,8 @@ export class PayPrincipalDto {
 
   @IsString()
   cashRegisterId: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

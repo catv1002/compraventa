@@ -35,8 +35,8 @@ export class BillingService {
     });
   }
 
-  async issue(id: string) {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+  async issue(id: string, currentUser: AuthenticatedUser) {
+    const invoice = await this.prisma.invoice.findFirst({ where: { id, tenantId: currentUser.tenantId } });
     if (!invoice) {
       throw new NotFoundException('Factura no encontrada');
     }

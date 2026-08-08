@@ -14,6 +14,11 @@ import { WorkshopModule } from './modules/workshop/workshop.module';
 import { CollectionsModule } from './modules/collections/collections.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { PurchaseAllowancesModule } from './modules/purchase-allowances/purchase-allowances.module';
+import { UsersModule } from './modules/users/users.module';
+import { TenantConfigurationModule } from './modules/tenant-configuration/tenant-configuration.module';
+import { MetalPricesModule } from './modules/metal-prices/metal-prices.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -32,6 +37,11 @@ import { BillingModule } from './modules/billing/billing.module';
     CollectionsModule,
     AccountingModule,
     BillingModule,
+    PurchaseAllowancesModule,
+    UsersModule,
+    TenantConfigurationModule,
+    MetalPricesModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

@@ -1,4 +1,5 @@
-import { IsInt, IsString, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { PaymentMethod } from '@prisma/client';
 
 /**
  * Pago de intereses (RN-04).
@@ -15,4 +16,8 @@ export class PayInterestDto {
 
   @IsString()
   cashRegisterId: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

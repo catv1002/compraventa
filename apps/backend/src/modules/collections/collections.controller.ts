@@ -14,22 +14,25 @@ export class CollectionsController {
   constructor(private readonly collectionsService: CollectionsService) {}
 
   @Get('upcoming')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   upcoming(@CurrentUser() user: AuthenticatedUser, @Query('days') days?: string) {
     return this.collectionsService.upcoming(user, days ? Number(days) : 7);
   }
 
   @Get('overdue')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   overdue(@CurrentUser() user: AuthenticatedUser) {
     return this.collectionsService.overdue(user);
   }
 
   @Get('recovery-rate')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   recoveryRate(@CurrentUser() user: AuthenticatedUser) {
     return this.collectionsService.recoveryRate(user);
   }
 
   @Post(':contractId/contact')
-  @Roles(UserRole.CollectionsAgent, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   @Audited('CollectionContactAttempt', 'CollectionCaseLogged')
   logContact(
     @Param('contractId') contractId: string,
@@ -40,6 +43,7 @@ export class CollectionsController {
   }
 
   @Get(':contractId/contact')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   contactHistory(@Param('contractId') contractId: string) {
     return this.collectionsService.contactHistory(contractId);
   }

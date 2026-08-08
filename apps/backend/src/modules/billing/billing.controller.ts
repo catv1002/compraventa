@@ -14,7 +14,7 @@ export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Post()
-  @Roles(UserRole.Cashier, UserRole.SalesAdvisor, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.Admin)
   @Audited('Invoice', 'InvoiceDrafted')
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: AuthenticatedUser) {
     return this.billingService.create(dto, user);
@@ -31,9 +31,9 @@ export class BillingController {
   }
 
   @Post(':id/issue')
-  @Roles(UserRole.Cashier, UserRole.SalesAdvisor, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.Admin)
   @Audited('Invoice', 'InvoiceIssued')
-  issue(@Param('id') id: string) {
-    return this.billingService.issue(id);
+  issue(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.billingService.issue(id, user);
   }
 }

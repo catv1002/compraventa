@@ -36,8 +36,8 @@ export class WorkshopService {
     return order;
   }
 
-  async addSparePart(orderId: string, dto: AddSparePartDto) {
-    const order = await this.getOpenOrder(orderId);
+  async addSparePart(orderId: string, dto: AddSparePartDto, currentUser: AuthenticatedUser) {
+    const order = await this.getOpenOrder(orderId, currentUser);
     await this.prisma.sparePart.create({
       data: { repairOrderId: order.id, description: dto.description, cost: dto.cost },
     });
@@ -48,8 +48,8 @@ export class WorkshopService {
     });
   }
 
-  async complete(orderId: string) {
-    const order = await this.getOpenOrder(orderId);
+  async complete(orderId: string, currentUser: AuthenticatedUser) {
+    const order = await this.getOpenOrder(orderId, currentUser);
 
     const completed = await this.prisma.repairOrder.update({
       where: { id: order.id },
@@ -68,8 +68,8 @@ export class WorkshopService {
     return completed;
   }
 
-  async cancel(orderId: string) {
-    const order = await this.getOpenOrder(orderId);
+  async cancel(orderId: string, currentUser: AuthenticatedUser) {
+    const order = await this.getOpenOrder(orderId, currentUser);
     await this.inventoryService.transitionStatus(order.itemId, ItemStatus.InStock);
     return this.prisma.repairOrder.update({
       where: { id: order.id },
@@ -77,15 +77,22 @@ export class WorkshopService {
     });
   }
 
-  findAll() {
+  findAll(currentUser: AuthenticatedUser) {
     return this.prisma.repairOrder.findMany({
+      where: { item: { tenantId: currentUser.tenantId } },
       include: { item: true, spareParts: true, technician: true },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  private async getOpenOrder(id: string) {
-    const order = await this.prisma.repairOrder.findUnique({ where: { id } });
+  // Aislamiento multi-tenant: `RepairOrder` no lleva `tenantId` propio, así
+  // que se filtra a través del artículo (CV-016). Sin esto, conocer un
+  // `orderId` ajeno bastaría para operar la orden de reparación de otra
+  // empresa.
+  private async getOpenOrder(id: string, currentUser: AuthenticatedUser) {
+    const order = await this.prisma.repairOrder.findFirst({
+      where: { id, item: { tenantId: currentUser.tenantId } },
+    });
     if (!order) {
       throw new NotFoundException('Orden de reparación no encontrada');
     }

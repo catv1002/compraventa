@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from './current-user.decorator';
 
 // Roles de aprobación que deben tener MFA activo — ver docs/10-roadmap.md (Fase 2).
-export const MFA_REQUIRED_ROLES: UserRole[] = [UserRole.Admin, UserRole.BranchManager, UserRole.Accountant];
+export const MFA_REQUIRED_ROLES: UserRole[] = [UserRole.Admin, UserRole.BranchManager];
 
 /**
  * ¿Se omite la verificación del código MFA en este arranque?

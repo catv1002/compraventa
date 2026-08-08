@@ -6,12 +6,14 @@ import {
   ContractStatus,
   ContractType,
   ItemStatus,
+  PaymentMethod,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { InventoryService } from '../inventory/inventory.service';
 import { CashService } from '../cash/cash.service';
+import { PurchaseAllowancesService } from '../purchase-allowances/purchase-allowances.service';
 // Vocabulario legal del libro de caja (RN-25). El mostrador dice "liquidar";
 // el libro dice "CAPITAL LIQUIDACION" y "RETROVENTA". Ver
 // cash/statement/cash-movement-detail.ts.
@@ -20,7 +22,9 @@ import {
   settlementPrincipalDetail,
   settlementSurchargeDetail,
 } from '../cash/statement/cash-movement-detail';
+import { randomUUID } from 'crypto';
 import { CreateContractDto } from './dto/create-contract.dto';
+import { CreateSaleTicketDto } from './dto/create-sale-ticket.dto';
 import { RenewContractDto } from './dto/renew-contract.dto';
 import { SettleContractDto } from './dto/settle-contract.dto';
 import { PayInstallmentDto } from './dto/pay-installment.dto';
@@ -61,6 +65,7 @@ export class ContractsService {
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
     private readonly cashService: CashService,
+    private readonly purchaseAllowancesService: PurchaseAllowancesService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -197,6 +202,8 @@ export class ContractsService {
           interestRate: dto.contractType === ContractType.Pawn ? policy.monthlyRate : (dto.interestRate ?? 0),
           dueDate,
           status: isImmediateTransaction ? ContractStatus.Settled : ContractStatus.Created,
+          // Solo tiene sentido en Sale; en el resto queda en el default (0).
+          discountAmount: dto.contractType === ContractType.Sale ? (dto.discountAmount ?? 0) : 0,
         },
       });
     });
@@ -210,7 +217,17 @@ export class ContractsService {
     // artículo permanece en Appraised hasta que haya desembolso confirmado.
 
     if (dto.contractType === ContractType.DirectPurchase) {
-      await this.recordDisbursement(contract.id, cashRegisterId, dto.principalAmount, currentUser);
+      // Compra directa desembolsa de inmediato — el cupo se descuenta aquí, no
+      // al crear el contrato, para que un mismo vendedor no pueda dejar varios
+      // contratos "Created" en paralelo y saltarse el tope diario.
+      await this.purchaseAllowancesService.consume(currentUser.userId, dto.principalAmount, currentUser);
+      await this.recordDisbursement(
+        contract.id,
+        cashRegisterId,
+        dto.principalAmount,
+        currentUser,
+        dto.paymentMethod ?? PaymentMethod.Cash,
+      );
       await this.inventoryService.transitionStatus(dto.itemId, ItemStatus.InStock);
       await this.inventoryService.incrementCostBasis(dto.itemId, dto.principalAmount);
       await this.eventEmitter.emitAsync(
@@ -229,12 +246,17 @@ export class ContractsService {
     }
 
     if (dto.contractType === ContractType.Sale) {
-      await this.cashService.recordMovement(cashRegisterId, {
-        type: CashMovementType.CashIn,
-        amount: dto.principalAmount,
-        sourceType: 'Contract',
-        contractId: contract.id,
-      });
+      await this.cashService.recordMovement(
+        cashRegisterId,
+        {
+          type: CashMovementType.CashIn,
+          amount: dto.principalAmount,
+          sourceType: 'Contract',
+          contractId: contract.id,
+          paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+        },
+        currentUser,
+      );
       await this.inventoryService.transitionStatus(dto.itemId, ItemStatus.Sold);
       await this.eventEmitter.emitAsync(
         DomainEventNames.ItemSold,
@@ -245,16 +267,131 @@ export class ContractsService {
     return this.findOne(contract.id, currentUser);
   }
 
-  private async recordDisbursement(contractId: string, cashRegisterId: string, amount: number, currentUser: AuthenticatedUser) {
+  /**
+   * Venta de mostrador multi-artículo ("ticket") — Option B del gap de venta
+   * de un solo artículo por contrato: NO se toca `Contract.itemId` (Pawn,
+   * DirectPurchase y Layaway siguen siendo 1 artículo = 1 contrato por diseño
+   * del negocio). En vez de eso, cada artículo del carrito sigue creando su
+   * propio Contract tipo Sale — con su propio contractNumber y su propio
+   * CashMovement, trazabilidad intacta — y todos comparten un `saleTicketId`
+   * generado aquí, solo para poder imprimir un recibo combinado.
+   *
+   * Todo o nada: si el artículo N de M no está disponible, no deben quedar
+   * N-1 artículos ya vendidos con la operadora sin saber qué se alcanzó a
+   * cobrar (mismo principio que `forfeitContracts`, ver su comentario).
+   */
+  async createSaleTicket(dto: CreateSaleTicketDto, currentUser: AuthenticatedUser) {
+    const saleTicketId = randomUUID();
+    const paymentMethod = dto.paymentMethod ?? PaymentMethod.Cash;
+    const { config } = await this.loadInterestPolicy(currentUser.tenantId);
+
+    const createdContracts = await this.prisma.$transaction(async (tx) => {
+      const results: { id: string; itemId: string; principalAmount: number }[] = [];
+
+      for (const line of dto.items) {
+        // Mismo aislamiento multi-tenant que el resto del módulo (CV-016): un
+        // itemId de otra empresa no puede colarse porque se filtra por
+        // tenantId dentro de la misma transacción.
+        const item = await tx.item.findFirst({
+          where: { id: line.itemId, tenantId: currentUser.tenantId },
+        });
+        if (!item) {
+          throw new NotFoundException(`Artículo ${line.itemId} no encontrado`);
+        }
+        if (item.status !== ItemStatus.InStock) {
+          throw new BadRequestException(
+            `El artículo ${line.itemId} no está en estado InStock (estado actual: ${item.status}). ` +
+              'No se creó ningún contrato del ticket.',
+          );
+        }
+
+        const contractNumber = await this.nextContractNumber(
+          tx,
+          currentUser.homeBranchId,
+          config?.contractNumberOffset ?? 0,
+        );
+
+        const contract = await tx.contract.create({
+          data: {
+            tenantId: currentUser.tenantId,
+            branchId: currentUser.homeBranchId,
+            contractNumber,
+            customerId: dto.customerId,
+            itemId: line.itemId,
+            contractType: ContractType.Sale,
+            principalAmount: line.principalAmount,
+            interestRate: 0,
+            status: ContractStatus.Settled,
+            discountAmount: line.discountAmount ?? 0,
+            saleTicketId,
+          },
+        });
+
+        await this.cashService.recordMovement(
+          dto.cashRegisterId,
+          {
+            type: CashMovementType.CashIn,
+            amount: line.principalAmount,
+            sourceType: 'Contract',
+            contractId: contract.id,
+            paymentMethod,
+          },
+          currentUser,
+          tx,
+        );
+
+        await tx.item.update({ where: { id: line.itemId }, data: { status: ItemStatus.Sold } });
+
+        results.push({ id: contract.id, itemId: line.itemId, principalAmount: line.principalAmount });
+      }
+
+      return results;
+    });
+
+    // Eventos DESPUÉS del commit — mismo criterio que `settle()`/`forfeitContracts()`:
+    // sus consumidores (contabilidad, inventario) no deben leer estado que
+    // todavía puede revertirse.
+    for (const created of createdContracts) {
+      await this.eventEmitter.emitAsync(
+        DomainEventNames.ContractCreated,
+        new ContractCreatedEvent(created.id, ContractType.Sale, created.principalAmount, created.itemId),
+      );
+      await this.eventEmitter.emitAsync(
+        DomainEventNames.ItemSold,
+        new ItemSoldEvent(created.itemId, created.principalAmount, dto.customerId),
+      );
+    }
+
+    return {
+      saleTicketId,
+      contracts: await this.prisma.contract.findMany({
+        where: { saleTicketId, tenantId: currentUser.tenantId },
+        orderBy: { contractNumber: 'asc' },
+      }),
+    };
+  }
+
+  private async recordDisbursement(
+    contractId: string,
+    cashRegisterId: string,
+    amount: number,
+    currentUser: AuthenticatedUser,
+    paymentMethod: PaymentMethod = PaymentMethod.Cash,
+  ) {
     await this.prisma.contractMovement.create({
       data: { contractId, type: ContractMovementType.Disbursement, amount },
     });
-    await this.cashService.recordMovement(cashRegisterId, {
-      type: CashMovementType.CashOut,
-      amount,
-      sourceType: 'Contract',
-      contractId,
-    });
+    await this.cashService.recordMovement(
+      cashRegisterId,
+      {
+        type: CashMovementType.CashOut,
+        amount,
+        sourceType: 'Contract',
+        contractId,
+        paymentMethod,
+      },
+      currentUser,
+    );
     await this.eventEmitter.emitAsync(
       DomainEventNames.DisbursementIssued,
       new DisbursementIssuedEvent(contractId, amount, currentUser.homeBranchId),
@@ -264,7 +401,12 @@ export class ContractsService {
   // Confirma un contrato Pawn en estado Created: paga el valor de compra y
   // mueve el artículo a custodia. Separado de create() porque entre el
   // avalúo y el desembolso el cliente puede arrepentirse (ver withdraw()).
-  async disburseContract(contractId: string, cashRegisterId: string, currentUser: AuthenticatedUser) {
+  async disburseContract(
+    contractId: string,
+    cashRegisterId: string,
+    currentUser: AuthenticatedUser,
+    paymentMethod: PaymentMethod = PaymentMethod.Cash,
+  ) {
     const contract = await this.findOwned(contractId, currentUser);
     if (!contract) {
       throw new NotFoundException('Contrato no encontrado');
@@ -276,7 +418,8 @@ export class ContractsService {
       throw new BadRequestException(`El contrato no admite desembolso en estado ${contract.status}`);
     }
 
-    await this.recordDisbursement(contractId, cashRegisterId, Number(contract.principalAmount), currentUser);
+    await this.purchaseAllowancesService.consume(currentUser.userId, Number(contract.principalAmount), currentUser);
+    await this.recordDisbursement(contractId, cashRegisterId, Number(contract.principalAmount), currentUser, paymentMethod);
     await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.InPledgeCustody);
 
     // El interés corre desde que el cliente recibe la plata, no desde que se
@@ -406,12 +549,17 @@ export class ContractsService {
     await this.prisma.contractMovement.create({
       data: { contractId, type: ContractMovementType.InterestPayment, amount },
     });
-    await this.cashService.recordMovement(dto.cashRegisterId, {
-      type: CashMovementType.CashIn,
-      amount,
-      sourceType: 'Contract',
-      contractId,
-    });
+    await this.cashService.recordMovement(
+      dto.cashRegisterId,
+      {
+        type: CashMovementType.CashIn,
+        amount,
+        sourceType: 'Contract',
+        contractId,
+        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+      },
+      currentUser,
+    );
     await this.eventEmitter.emitAsync(
       DomainEventNames.InterestPaymentRecorded,
       new InterestPaymentRecordedEvent(contractId, amount),
@@ -460,12 +608,17 @@ export class ContractsService {
     await this.prisma.contractMovement.create({
       data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
     });
-    await this.cashService.recordMovement(dto.cashRegisterId, {
-      type: CashMovementType.CashIn,
-      amount: dto.amount,
-      sourceType: 'Contract',
-      contractId,
-    });
+    await this.cashService.recordMovement(
+      dto.cashRegisterId,
+      {
+        type: CashMovementType.CashIn,
+        amount: dto.amount,
+        sourceType: 'Contract',
+        contractId,
+        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+      },
+      currentUser,
+    );
 
     const updated = await this.prisma.contract.update({
       where: { id: contractId },
@@ -586,7 +739,9 @@ export class ContractsService {
             contractId,
             documentNumber,
             detail: settlementSurchargeDetail(contract.contractNumber),
+            paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
           },
+          currentUser,
           tx,
         );
       }
@@ -603,7 +758,9 @@ export class ContractsService {
             contractId,
             documentNumber,
             detail: settlementPrincipalDetail(contract.contractNumber),
+            paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
           },
+          currentUser,
           tx,
         );
       }
@@ -639,12 +796,17 @@ export class ContractsService {
     await this.prisma.contractMovement.create({
       data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
     });
-    await this.cashService.recordMovement(dto.cashRegisterId, {
-      type: CashMovementType.CashIn,
-      amount: dto.amount,
-      sourceType: 'Contract',
-      contractId,
-    });
+    await this.cashService.recordMovement(
+      dto.cashRegisterId,
+      {
+        type: CashMovementType.CashIn,
+        amount: dto.amount,
+        sourceType: 'Contract',
+        contractId,
+        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+      },
+      currentUser,
+    );
 
     const newPaidAmount = Number(contract.paidAmount) + dto.amount;
     const completed = newPaidAmount >= Number(contract.principalAmount);
@@ -668,10 +830,8 @@ export class ContractsService {
     return updated;
   }
 
-  async cancelLayaway(contractId: string, penaltyAmount = 0, currentUser?: AuthenticatedUser) {
-    const contract = currentUser
-      ? await this.findOwned(contractId, currentUser)
-      : await this.prisma.contract.findUnique({ where: { id: contractId } });
+  async cancelLayaway(contractId: string, penaltyAmount = 0, currentUser: AuthenticatedUser) {
+    const contract = await this.findOwned(contractId, currentUser);
     if (!contract || contract.contractType !== ContractType.Layaway) {
       throw new BadRequestException('Este contrato no es un Plan Separe');
     }
@@ -862,6 +1022,121 @@ export class ContractsService {
       throw new NotFoundException('Contrato no encontrado');
     }
     return contract;
+  }
+
+  /**
+   * Datos para el comprobante imprimible de un contrato (mostrador, no DIAN).
+   *
+   * Deliberadamente NO pasa por `billing`/Invoice: ese módulo es el stub de
+   * facturación electrónica (legalmente gatillado, requiere proveedor DIAN
+   * contratado). Un recibo de venta de mostrador no es una factura de venta
+   * ante la DIAN — es solo la constancia que el cliente se lleva. Ver
+   * docs/03-dominios-ddd.md (8. Facturación).
+   */
+  async getReceiptData(contractId: string, currentUser: AuthenticatedUser) {
+    const contract = await this.prisma.contract.findFirst({
+      where: { id: contractId, tenantId: currentUser.tenantId },
+      include: {
+        customer: true,
+        branch: true,
+        item: { include: { category: true, attributes: true } },
+        cashMovements: { orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }] },
+      },
+    });
+    if (!contract) {
+      throw new NotFoundException('Contrato no encontrado');
+    }
+
+    // Sale cobra al entrar (CashIn); el desembolso de un Pawn/DirectPurchase
+    // paga al salir (CashOut). El medio de pago del comprobante es el de ESE
+    // movimiento, no cualquiera de los que tenga el contrato (una liquidación
+    // posterior puede haber usado otro medio).
+    const relevantMovement =
+      contract.contractType === ContractType.Sale
+        ? contract.cashMovements.find((m) => m.type === CashMovementType.CashIn)
+        : contract.cashMovements.find((m) => m.type === CashMovementType.CashOut);
+
+    // El "operador responsable" no es un campo del contrato: se reconstruye de
+    // quién lo creó según el rastro de auditoría (@Audited('Contract',
+    // 'ContractCreated') en el controller). Si ese registro no existe —
+    // auditoría fallida, contrato muy antiguo— se devuelve null en vez de
+    // adivinar un responsable.
+    const creationLog = await this.prisma.auditLog.findFirst({
+      where: { entity: 'Contract', entityId: contract.id, action: 'ContractCreated' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const operator = creationLog?.userId
+      ? await this.prisma.user.findUnique({
+          where: { id: creationLog.userId },
+          select: { fullName: true },
+        })
+      : null;
+
+    const isSale = contract.contractType === ContractType.Sale;
+    const discountAmount = isSale ? Number(contract.discountAmount) : 0;
+
+    return {
+      contractId: contract.id,
+      contractNumber: contract.contractNumber,
+      contractType: contract.contractType,
+      date: contract.createdAt,
+      branchName: contract.branch.name,
+      customer: {
+        fullName: contract.customer.fullName,
+        identificationNumber: contract.customer.identificationNumber,
+      },
+      item: {
+        description: contract.item.description,
+        category: contract.item.category?.name ?? null,
+        attributes: contract.item.attributes.map((a) => ({ key: a.key, value: a.value })),
+      },
+      principalAmount: Number(contract.principalAmount),
+      // Solo poblado para Sale — el "precio de lista" es informativo
+      // (principalAmount + discountAmount); en el resto de tipos va null.
+      discountAmount: isSale ? discountAmount : null,
+      listPrice: isSale ? Number(contract.principalAmount) + discountAmount : null,
+      paymentMethod: relevantMovement?.paymentMethod ?? null,
+      operatorName: operator?.fullName ?? null,
+    };
+  }
+
+  /**
+   * Comprobante imprimible del ticket de venta multi-artículo. Reutiliza
+   * `getReceiptData` por cada Contract del ticket en vez de reescribir su
+   * `include` — la única pieza propia de aquí es la agrupación por
+   * `saleTicketId` (tenant-scoped, ver CV-016) y las sumas del total.
+   */
+  async getSaleTicketReceiptData(saleTicketId: string, currentUser: AuthenticatedUser) {
+    const contracts = await this.prisma.contract.findMany({
+      where: { saleTicketId, tenantId: currentUser.tenantId },
+      orderBy: { contractNumber: 'asc' },
+      select: { id: true },
+    });
+    if (contracts.length === 0) {
+      throw new NotFoundException('Ticket de venta no encontrado');
+    }
+
+    const items = await Promise.all(
+      contracts.map((c) => this.getReceiptData(c.id, currentUser)),
+    );
+
+    const totalPrincipal = items.reduce((sum, i) => sum + i.principalAmount, 0);
+    const totalDiscount = items.reduce((sum, i) => sum + (i.discountAmount ?? 0), 0);
+    const totalCharged = totalPrincipal;
+
+    const first = items[0];
+    return {
+      saleTicketId,
+      items,
+      totalPrincipal,
+      totalDiscount,
+      totalCharged,
+      paymentMethod: first.paymentMethod,
+      customer: first.customer,
+      branch: first.branchName,
+      operatorName: first.operatorName,
+      createdAt: first.date,
+    };
   }
 
   private async getActiveOrOverdue(contractId: string, currentUser: AuthenticatedUser) {

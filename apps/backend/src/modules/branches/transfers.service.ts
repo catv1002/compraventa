@@ -38,8 +38,8 @@ export class TransfersService {
     return transfer;
   }
 
-  async dispatch(id: string) {
-    const transfer = await this.getByStatus(id, TransferStatus.Requested);
+  async dispatch(id: string, currentUser: AuthenticatedUser) {
+    const transfer = await this.getByStatus(id, TransferStatus.Requested, currentUser);
     return this.prisma.branchTransfer.update({
       where: { id: transfer.id },
       data: { status: TransferStatus.InTransit },
@@ -47,7 +47,7 @@ export class TransfersService {
   }
 
   async receive(id: string, currentUser: AuthenticatedUser) {
-    const transfer = await this.getByStatus(id, TransferStatus.InTransit);
+    const transfer = await this.getByStatus(id, TransferStatus.InTransit, currentUser);
 
     await this.inventoryService.moveToBranch(transfer.itemId, transfer.toBranchId, ItemStatus.InStock);
 
@@ -64,8 +64,15 @@ export class TransfersService {
     return received;
   }
 
-  async cancel(id: string) {
-    const transfer = await this.prisma.branchTransfer.findUnique({ where: { id } });
+  async cancel(id: string, currentUser: AuthenticatedUser) {
+    // Aislamiento multi-tenant: `BranchTransfer` no lleva `tenantId` propio,
+    // así que se filtra a través de la sucursal de origen (CV-016). Un
+    // traslado solo existe entre dos sucursales del mismo tenant (`initiate`
+    // fija `fromBranchId` a `currentUser.homeBranchId`), así que basta con
+    // filtrar por `fromBranch.tenantId`.
+    const transfer = await this.prisma.branchTransfer.findFirst({
+      where: { id, fromBranch: { tenantId: currentUser.tenantId } },
+    });
     if (!transfer || transfer.status === TransferStatus.Received || transfer.status === TransferStatus.Cancelled) {
       throw new BadRequestException('El traslado no admite cancelación en su estado actual');
     }
@@ -86,8 +93,10 @@ export class TransfersService {
     });
   }
 
-  private async getByStatus(id: string, status: TransferStatus) {
-    const transfer = await this.prisma.branchTransfer.findUnique({ where: { id } });
+  private async getByStatus(id: string, status: TransferStatus, currentUser: AuthenticatedUser) {
+    const transfer = await this.prisma.branchTransfer.findFirst({
+      where: { id, fromBranch: { tenantId: currentUser.tenantId } },
+    });
     if (!transfer) {
       throw new NotFoundException('Traslado no encontrado');
     }

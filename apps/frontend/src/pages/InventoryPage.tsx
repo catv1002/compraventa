@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { Modal } from '../components/Modal';
+import { useAuth } from '../lib/auth-context';
 
 /**
  * Definición de un atributo dinámico, tal como la publica
@@ -46,6 +47,30 @@ interface Item {
   attributes: ItemAttribute[];
 }
 
+interface MetalPriceRow {
+  id: string;
+  metal: 'Gold' | 'Silver' | 'Platinum';
+  pricePerGramFine: string | number;
+  createdAt: string;
+}
+
+type MetalPricesCurrent = Record<'Gold' | 'Silver' | 'Platinum', MetalPriceRow | null>;
+
+const METAL_LABELS: Record<'Gold' | 'Silver' | 'Platinum', string> = {
+  Gold: 'Oro',
+  Silver: 'Plata',
+  Platinum: 'Platino',
+};
+
+interface SuggestedValue {
+  suggestedValue: number | null;
+  reason?: string;
+  metal?: string;
+  purity?: number;
+  weightGrams?: number;
+  pricePerGramFine?: number;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   Received: 'Recibido',
   Appraised: 'Avaluado',
@@ -72,8 +97,68 @@ function classLabel(category: Category): string {
   return category.legacyCode ? `${category.legacyCode} · ${category.name}` : category.name;
 }
 
+/**
+ * Franja compacta con la cotización vigente de cada metal, editable solo por
+ * BranchManager/Admin (CV-032): "abrir la caja del día" para el avalúo, no
+ * una pantalla de configuración aparte.
+ */
+function MetalPricesStrip() {
+  const queryClient = useQueryClient();
+  const { data: current } = useQuery({
+    queryKey: ['metal-prices-current'],
+    queryFn: () => api.get<MetalPricesCurrent>('/metal-prices/current'),
+  });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const setPrice = useMutation({
+    mutationFn: (metal: 'Gold' | 'Silver' | 'Platinum') =>
+      api.post('/metal-prices', { metal, pricePerGramFine: Number(drafts[metal]) }),
+    onSuccess: (_data, metal) => {
+      queryClient.invalidateQueries({ queryKey: ['metal-prices-current'] });
+      setDrafts((d) => ({ ...d, [metal]: '' }));
+    },
+  });
+
+  const metals: ('Gold' | 'Silver' | 'Platinum')[] = ['Gold', 'Silver', 'Platinum'];
+
+  return (
+    <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+      {metals.map((metal) => {
+        const row = current?.[metal];
+        return (
+          <div key={metal} className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-medium text-slate-500">Cotización {METAL_LABELS[metal]} (por gramo puro)</p>
+            <p className="text-sm font-semibold text-slate-800">
+              {row ? `$${Number(row.pricePerGramFine).toLocaleString('es-CO')}` : 'Sin cotización hoy'}
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                value={drafts[metal] ?? ''}
+                onChange={(e) => setDrafts((d) => ({ ...d, [metal]: e.target.value }))}
+                type="number"
+                min={0}
+                placeholder="Nuevo precio/g"
+                aria-label={`Nuevo precio por gramo de ${METAL_LABELS[metal]}`}
+                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+              />
+              <button
+                onClick={() => setPrice.mutate(metal)}
+                disabled={!drafts[metal] || setPrice.isPending}
+                className="whitespace-nowrap rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Actualizar
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function InventoryPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { data: items } = useQuery({ queryKey: ['items'], queryFn: () => api.get<Item[]>('/items') });
   const { data: categories } = useQuery({
     queryKey: ['categories'],
@@ -150,6 +235,14 @@ export function InventoryPage() {
   const [appraisedValue, setAppraisedValue] = useState('');
   const [loanablePercentage, setLoanablePercentage] = useState('60');
 
+  // Sugerencia de avalúo (CV-032): solo se pide mientras el formulario de un
+  // artículo está abierto, no para toda la lista.
+  const { data: suggested } = useQuery({
+    queryKey: ['appraisal-suggested-value', appraisingItemId],
+    queryFn: () => api.get<SuggestedValue>(`/items/${appraisingItemId}/appraisal/suggested-value`),
+    enabled: !!appraisingItemId,
+  });
+
   const createAppraisal = useMutation({
     mutationFn: (itemId: string) =>
       api.post(`/items/${itemId}/appraisal`, {
@@ -185,6 +278,8 @@ export function InventoryPage() {
         </button>
       </div>
 
+      {user?.role !== 'SalesAdvisor' && <MetalPricesStrip />}
+
       <div className="space-y-2">
         {items?.map((item) => {
           const weight = item.attributes?.find((a) => a.key === 'weightGrams')?.value;
@@ -210,30 +305,49 @@ export function InventoryPage() {
               {item.status === 'Received' && (
                 <div>
                   {appraisingItemId === item.id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={appraisedValue}
-                        onChange={(e) => setAppraisedValue(e.target.value)}
-                        placeholder="Valor avaluado"
-                        type="number"
-                        aria-label="Valor avaluado"
-                        className="w-28 rounded-md border border-slate-300 px-2 py-1 text-sm"
-                      />
-                      <input
-                        value={loanablePercentage}
-                        onChange={(e) => setLoanablePercentage(e.target.value)}
-                        placeholder="% prestable"
-                        type="number"
-                        aria-label="Porcentaje prestable"
-                        className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm"
-                      />
-                      <button
-                        onClick={() => createAppraisal.mutate(item.id)}
-                        disabled={createAppraisal.isPending}
-                        className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
-                      >
-                        {createAppraisal.isPending ? 'Guardando…' : 'Guardar'}
-                      </button>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={appraisedValue}
+                          onChange={(e) => setAppraisedValue(e.target.value)}
+                          placeholder="Valor avaluado"
+                          type="number"
+                          aria-label="Valor avaluado"
+                          className="w-28 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                        <input
+                          value={loanablePercentage}
+                          onChange={(e) => setLoanablePercentage(e.target.value)}
+                          placeholder="% prestable"
+                          type="number"
+                          aria-label="Porcentaje prestable"
+                          className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                        <button
+                          onClick={() => createAppraisal.mutate(item.id)}
+                          disabled={createAppraisal.isPending}
+                          className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
+                        >
+                          {createAppraisal.isPending ? 'Guardando…' : 'Guardar'}
+                        </button>
+                      </div>
+                      {suggested?.suggestedValue != null ? (
+                        <p className="text-xs text-slate-500">
+                          Sugerido: ${suggested.suggestedValue.toLocaleString('es-CO')} (
+                          {suggested.weightGrams}g × {Math.round((suggested.purity ?? 0) * 100)}% × $
+                          {Number(suggested.pricePerGramFine).toLocaleString('es-CO')}/g de {METAL_LABELS[suggested.metal as 'Gold' | 'Silver' | 'Platinum'] ?? suggested.metal})
+                          {' · '}
+                          <button
+                            type="button"
+                            onClick={() => setAppraisedValue(String(suggested.suggestedValue))}
+                            className="font-medium text-slate-700 underline hover:text-slate-900"
+                          >
+                            Usar sugerido
+                          </button>
+                        </p>
+                      ) : suggested?.reason ? (
+                        <p className="text-xs text-slate-400">{suggested.reason}</p>
+                      ) : null}
                     </div>
                   ) : (
                     <button

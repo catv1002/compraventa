@@ -87,11 +87,18 @@ export class CashService {
   async recordMovement(
     cashRegisterId: string,
     dto: RecordMovementDto,
+    currentUser: AuthenticatedUser,
     tx?: Prisma.TransactionClient,
   ) {
     const db = tx ?? this.prisma;
 
-    const register = await db.cashRegister.findUnique({ where: { id: cashRegisterId } });
+    // Aislamiento multi-tenant: `CashRegister` no lleva `tenantId` propio, así
+    // que se filtra a través de la sucursal (CV-016). Sin esto, conocer un
+    // `cashRegisterId` ajeno bastaría para meter un movimiento en la caja de
+    // otra empresa.
+    const register = await db.cashRegister.findFirst({
+      where: { id: cashRegisterId, branch: { tenantId: currentUser.tenantId } },
+    });
     if (!register || register.status !== CashRegisterStatus.Open) {
       throw new BadRequestException('La caja no está abierta');
     }
@@ -109,6 +116,7 @@ export class CashService {
         // reconstruye después (RN-25 / CV-032). Si el llamante no lo aporta se
         // escribe uno de último recurso, que no inventa terminología legal.
         detail: dto.detail?.trim() || fallbackDetail(dto.sourceType, dto.documentNumber),
+        paymentMethod: dto.paymentMethod,
       },
     });
 
@@ -120,8 +128,10 @@ export class CashService {
     return movement;
   }
 
-  async closeRegister(id: string, dto: CloseRegisterDto) {
-    const register = await this.prisma.cashRegister.findUnique({ where: { id } });
+  async closeRegister(id: string, dto: CloseRegisterDto, currentUser: AuthenticatedUser) {
+    const register = await this.prisma.cashRegister.findFirst({
+      where: { id, branch: { tenantId: currentUser.tenantId } },
+    });
     if (!register) {
       throw new NotFoundException('Caja no encontrada');
     }
@@ -227,10 +237,14 @@ export class CashService {
     });
   }
 
-  findOne(id: string) {
-    return this.prisma.cashRegister.findUnique({
-      where: { id },
+  async findOne(id: string, currentUser: AuthenticatedUser) {
+    const register = await this.prisma.cashRegister.findFirst({
+      where: { id, branch: { tenantId: currentUser.tenantId } },
       include: { movements: true, cashCount: true },
     });
+    if (!register) {
+      throw new NotFoundException('Caja no encontrada');
+    }
+    return register;
   }
 }

@@ -29,8 +29,37 @@ model Tenant {
   accounts      Account[]
   journalEntries JournalEntry[]
   invoices      Invoice[]
+  purchaseAllowances PurchaseAllowance[]
+  metalPrices   MetalPrice[]
 
   @@map("tenants")
+}
+
+enum MetalType {
+  Gold
+  Silver
+  Platinum
+}
+
+// Cotización del metal puro (100% de ley), para valorar automáticamente una
+// pieza como peso × pureza_del_quilataje × pricePerGramFine. Tabla histórica
+// append-only: cada fila nueva es la cotización vigente desde su createdAt;
+// nunca se actualiza una fila existente, así una tasación pasada se puede
+// reconstruir con el precio que regía ese día. Ver
+// KARAT_PURITY/karatToMetal en jewelry-catalog.ts para el mapeo
+// quilataje -> (metal, fracción de pureza).
+model MetalPrice {
+  id               String    @id @default(uuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id])
+  metal            MetalType
+  pricePerGramFine Decimal   @db.Decimal(14, 2)
+  setById          String
+  setBy            User      @relation(fields: [setById], references: [id])
+  createdAt        DateTime  @default(now())
+
+  @@index([tenantId, metal, createdAt])
+  @@map("metal_prices")
 }
 
 model Branch {
@@ -39,6 +68,7 @@ model Branch {
   tenant   Tenant @relation(fields: [tenantId], references: [id])
   name     String
   address  String?
+  active   Boolean @default(true)
 
   users         User[]
   items         Item[]
@@ -47,6 +77,7 @@ model Branch {
   contractSequence ContractSequence?
   transfersOut  BranchTransfer[] @relation("TransferFromBranch")
   transfersIn   BranchTransfer[] @relation("TransferToBranch")
+  purchaseAllowances PurchaseAllowance[]
 
   createdAt DateTime @default(now())
 
@@ -54,15 +85,9 @@ model Branch {
 }
 
 enum UserRole {
-  Cashier
-  Appraiser
   SalesAdvisor
   BranchManager
-  CollectionsAgent
-  Technician
-  Accountant
   Admin
-  Auditor
 }
 
 model User {
@@ -87,8 +112,39 @@ model User {
   transfersRequested BranchTransfer[] @relation("TransferRequestedBy")
   transfersReceived  BranchTransfer[] @relation("TransferReceivedBy")
   collectionContacts CollectionContactAttempt[]
+  purchaseAllowances       PurchaseAllowance[] @relation("PurchaseAllowanceOwner")
+  purchaseAllowancesGranted PurchaseAllowance[] @relation("PurchaseAllowanceGrantedBy")
+  metalPricesSet           MetalPrice[]
 
   @@map("users")
+}
+
+// Cupo diario de compra de un vendedor/cajero — ej. "hoy arrancas con 5M
+// para comprar oro/joyas". Distinto de CashRegister.baseAmount: la caja es el
+// efectivo físico de la sucursal, esto es un tope de gasto por PERSONA que se
+// valida contra Pawn/DirectPurchase al desembolsar (ver
+// ContractsService.assertPurchaseAllowance). Un vendedor sin registro para el
+// día de hoy no tiene cupo asignado (no se asume ilimitado).
+model PurchaseAllowance {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id])
+  userId        String
+  user          User     @relation("PurchaseAllowanceOwner", fields: [userId], references: [id])
+  // Solo la fecha (sin hora) — el cupo es por día calendario, no por turno.
+  date          DateTime @db.Date
+  assignedAmount Decimal @db.Decimal(14, 2)
+  spentAmount    Decimal @db.Decimal(14, 2) @default(0)
+  grantedById   String
+  grantedBy     User     @relation("PurchaseAllowanceGrantedBy", fields: [grantedById], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([tenantId, branchId, date])
+  @@map("purchase_allowances")
 }
 
 // ---------- Customers ----------
@@ -287,6 +343,19 @@ model Contract {
   dueDate         DateTime?
   renewalCount    Int           @default(0)
   paidAmount      Decimal       @db.Decimal(14, 2) @default(0)
+  // Solo tiene sentido en ContractType.Sale: cuánto se rebajó del precio de
+  // lista para llegar a `principalAmount` (que ya es el precio final cobrado).
+  // Cero/no usado en Pawn/DirectPurchase/Layaway.
+  discountAmount  Decimal       @db.Decimal(14, 2) @default(0)
+  // Agrupa varios Contract tipo Sale creados juntos en una sola venta de
+  // mostrador ("vender 3 anillos en un solo ticket"). NO es una FK ni una
+  // tabla propia a propósito: cada artículo sigue siendo su propio Contract
+  // (con su propio contractNumber, su propio movimiento de caja, su propia
+  // trazabilidad) — esto es solo la llave para agruparlos en un recibo
+  // combinado. Null en todo lo que no sea una venta multi-artículo. Empeño,
+  // compra directa y plan separe NUNCA lo usan: son 1 artículo = 1 contrato
+  // por diseño del negocio (vencimiento y remate individuales).
+  saleTicketId    String?
 
   // ---- Ancla del devengo de intereses (CV-002) ----
   // Fecha desde la cual corre el interés: el desembolso, no la creación.
@@ -306,6 +375,7 @@ model Contract {
 
   @@unique([branchId, contractNumber])
   @@index([tenantId, status])
+  @@index([saleTicketId])
   @@map("contracts")
 }
 
@@ -374,6 +444,13 @@ enum CashMovementType {
   CashOut
 }
 
+enum PaymentMethod {
+  Cash
+  Transfer
+  Card
+  Other
+}
+
 /// Un asiento del libro de caja. Es la fila del extracto (C-07 del sistema
 /// legado): documento · fecha · detalle · débito · crédito · saldo corrido ·
 /// fecha de proceso con hora. Ver CV-032 en docs/12-gap-analysis-y-backlog.md.
@@ -422,6 +499,11 @@ model CashMovement {
   sourceId   String?
   contractId String?
   contract   Contract? @relation(fields: [contractId], references: [id])
+  // Medio de pago del asiento — default Cash porque hasta ahora todo el dinero
+  // se asumía efectivo (los asientos históricos no lo distinguían). Permite
+  // reportar cuánto entró por transferencia/tarjeta sin romper el extracto ya
+  // escrito.
+  paymentMethod PaymentMethod @default(Cash)
   createdAt  DateTime  @default(now())
 
   @@index([cashRegisterId, createdAt, seq])

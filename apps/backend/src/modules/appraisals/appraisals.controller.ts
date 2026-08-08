@@ -14,7 +14,7 @@ export class AppraisalsController {
   constructor(private readonly appraisalsService: AppraisalsService) {}
 
   @Post()
-  @Roles(UserRole.Appraiser, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.Admin)
   @Audited('Appraisal', 'ItemAppraised')
   create(
     @Param('itemId') itemId: string,
@@ -27,5 +27,12 @@ export class AppraisalsController {
   @Get()
   findAll(@Param('itemId') itemId: string) {
     return this.appraisalsService.findByItem(itemId);
+  }
+
+  // Solo lectura/orientación: cualquier rol autenticado puede consultarlo, no
+  // mueve dinero ni estado del artículo.
+  @Get('suggested-value')
+  suggestedValue(@Param('itemId') itemId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.appraisalsService.suggestValue(itemId, user);
   }
 }

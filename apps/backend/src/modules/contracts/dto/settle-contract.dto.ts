@@ -1,4 +1,5 @@
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { PaymentMethod } from '@prisma/client';
 
 export class SettleContractDto {
   /**
@@ -21,4 +22,10 @@ export class SettleContractDto {
   @IsOptional()
   @IsString()
   thirdPartyIdNumber?: string;
+
+  // Medio de pago del cobro de liquidación (capital + retroventa). Un solo
+  // medio para los dos asientos: el cliente paga todo junto en el mostrador.
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

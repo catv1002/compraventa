@@ -1,5 +1,5 @@
 import { IsEnum, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
-import { CashMovementType } from '@prisma/client';
+import { CashMovementType, PaymentMethod } from '@prisma/client';
 
 export class RecordMovementDto {
   @IsEnum(CashMovementType)
@@ -45,4 +45,11 @@ export class RecordMovementDto {
   @IsString()
   @MaxLength(200)
   detail?: string;
+
+  // Medio de pago del asiento. Default Cash (schema.prisma) si se omite —
+  // cubre tanto el POST manual de la operadora como los llamantes internos
+  // (contracts.service.ts) que todavía no lo pasan.
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }

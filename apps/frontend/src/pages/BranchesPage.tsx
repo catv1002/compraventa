@@ -1,11 +1,13 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
+import { Modal } from '../components/Modal';
 
 interface Branch {
   id: string;
   name: string;
   address: string | null;
+  active: boolean;
 }
 interface Item {
   id: string;
@@ -44,6 +46,36 @@ export function BranchesPage() {
       setBranchName('');
     },
   });
+
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editActive, setEditActive] = useState(true);
+
+  function openEdit(b: Branch) {
+    setEditingBranch(b);
+    setEditName(b.name);
+    setEditAddress(b.address ?? '');
+    setEditActive(b.active);
+  }
+
+  const updateBranch = useMutation({
+    mutationFn: () =>
+      api.patch(`/branches/${editingBranch?.id}`, {
+        name: editName,
+        address: editAddress,
+        active: editActive,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['branches'] });
+      setEditingBranch(null);
+    },
+  });
+
+  function handleUpdateBranch(e: FormEvent) {
+    e.preventDefault();
+    updateBranch.mutate();
+  }
 
   const [transferItemId, setTransferItemId] = useState('');
   const [transferToBranch, setTransferToBranch] = useState('');
@@ -97,13 +129,80 @@ export function BranchesPage() {
         </form>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
           {branches?.map((b) => (
-            <div key={b.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-              <p className="font-medium text-slate-800">{b.name}</p>
-              <p className="text-xs text-slate-500">{b.address}</p>
+            <div key={b.id} className="flex items-start justify-between rounded-lg border border-slate-200 bg-white p-3 text-sm">
+              <div>
+                <p className="font-medium text-slate-800">
+                  {b.name}
+                  {!b.active && (
+                    <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      Inactiva
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-slate-500">{b.address}</p>
+              </div>
+              <button
+                onClick={() => openEdit(b)}
+                className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+              >
+                Editar
+              </button>
             </div>
           ))}
         </div>
       </div>
+
+      {editingBranch && (
+        <Modal title="Editar sucursal" onClose={() => setEditingBranch(null)}>
+          <form onSubmit={handleUpdateBranch} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Nombre</label>
+              <input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                required
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Dirección</label>
+              <input
+                value={editAddress}
+                onChange={(e) => setEditAddress(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={editActive}
+                onChange={(e) => setEditActive(e.target.checked)}
+              />
+              Sucursal activa
+            </label>
+            {updateBranch.isError && (
+              <p className="text-sm text-red-600">
+                {(updateBranch.error as any)?.message ?? 'No se pudo guardar la sucursal'}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingBranch(null)}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+              >
+                Guardar
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       <div>
         <h2 className="mb-4 text-lg font-semibold text-slate-800">Traslados entre sucursales</h2>

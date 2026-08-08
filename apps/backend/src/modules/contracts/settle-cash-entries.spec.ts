@@ -23,7 +23,7 @@ const currentUser = {
   userId: 'u-1',
   tenantId: 't-1',
   homeBranchId: 'b-1',
-  role: 'Cashier',
+  role: 'SalesAdvisor',
 } as any;
 
 /** Contrato calcado del caso real del legado: 92627, liquidado el 15/07 a las 16:11. */
@@ -70,6 +70,7 @@ function buildHarness(contract: Record<string, unknown>) {
     prisma as any,
     inventoryService as any,
     cashService as any,
+    {} as any,
     eventEmitter as any,
   );
 
@@ -125,7 +126,8 @@ describe('settle(): dos asientos de caja, no uno', () => {
     // El cliente transaccional se propaga a caja: una caja con el capital
     // asentado y la retroventa perdida cuadraría en apariencia.
     for (const call of cashService.recordMovement.mock.calls) {
-      expect(call[2]).toBe(tx);
+      expect(call[2]).toBe(currentUser);
+      expect(call[3]).toBe(tx);
     }
     expect(tx.contract.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: ContractStatus.Settled }) }),

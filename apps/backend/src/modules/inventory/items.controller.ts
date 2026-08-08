@@ -14,7 +14,7 @@ export class ItemsController {
   constructor(private readonly inventoryService: InventoryService) {}
 
   @Post()
-  @Roles(UserRole.Appraiser, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('Item', 'ItemReceived')
   create(@Body() dto: CreateItemDto, @CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.createItem(dto, user);

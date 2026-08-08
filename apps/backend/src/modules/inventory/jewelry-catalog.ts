@@ -41,6 +41,7 @@
  * ---------------------------------------------------------------------------
  */
 
+import { MetalType } from '@prisma/client';
 import { AttributeDefinition } from './attributes/attribute-validator';
 
 /**
@@ -91,6 +92,48 @@ export const GOLD_ATTRIBUTE_SCHEMA: { attributes: AttributeDefinition[] } = {
     },
   ],
 };
+
+/**
+ * Mapeo quilataje -> (metal, fracción de pureza sobre metal 100% puro), para
+ * el avalúo sugerido (CV-032): `suggestedValue = weightGrams * purity *
+ * MetalPrice.pricePerGramFine`.
+ *
+ * Oro (10k..24k): la fracción es quilates/24, la definición internacional de
+ * quilate. Se guarda como fracción exacta (`k / 24`), no como número
+ * redondeado a mano, para no acumular el mismo tipo de error de precisión que
+ * `roundAmount`/`fractionalMonthsBetween` evitan en intereses — el redondeo,
+ * si hace falta, se aplica una sola vez al final sobre el peso en pesos, no
+ * aquí sobre la fracción.
+ *
+ * Platino y plata no tienen "quilate": el número (950, 925) es la ley
+ * comercial —partes por mil de metal puro— con la que el gremio joyero
+ * colombiano vende y compra la pieza. No es una medición exacta por pieza
+ * (una pieza real puede diferir un poco de su ley nominal), es la convención
+ * de industria que también usa el tasador a mano; por eso está fija aquí y no
+ * es un dato que capture el operador.
+ *
+ * 'Otro' no tiene metal: pieza mixta o metal no catalogado, no se puede
+ * sugerir un valor automático (ver `AppraisalsService.suggestValue`).
+ */
+export const KARAT_PURITY: Record<(typeof KARAT_OPTIONS)[number], { metal: MetalType; purity: number } | null> = {
+  '10k': { metal: MetalType.Gold, purity: 10 / 24 },
+  '12k': { metal: MetalType.Gold, purity: 12 / 24 },
+  '14k': { metal: MetalType.Gold, purity: 14 / 24 },
+  '16k': { metal: MetalType.Gold, purity: 16 / 24 },
+  '18k': { metal: MetalType.Gold, purity: 18 / 24 },
+  '22k': { metal: MetalType.Gold, purity: 22 / 24 },
+  '24k': { metal: MetalType.Gold, purity: 24 / 24 },
+  // Ley 950: estándar comercial de joyería en platino.
+  Platino: { metal: MetalType.Platinum, purity: 0.95 },
+  // Ley 925 / sterling: estándar comercial de joyería en plata.
+  Plata: { metal: MetalType.Silver, purity: 0.925 },
+  Otro: null,
+};
+
+/** Atajo: solo el metal (o null) de un quilataje, sin la pureza. */
+export function karatToMetal(karat: string): MetalType | null {
+  return KARAT_PURITY[karat as (typeof KARAT_OPTIONS)[number]]?.metal ?? null;
+}
 
 export interface JewelryClassSeed {
   /** Código del legado, C-03. No contiguo y no reasignable. */

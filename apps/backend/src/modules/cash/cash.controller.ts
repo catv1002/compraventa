@@ -17,7 +17,7 @@ export class CashController {
   constructor(private readonly cashService: CashService) {}
 
   @Post('open')
-  @Roles(UserRole.Cashier, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('CashRegister', 'CashRegisterOpened')
   open(@Body() dto: OpenRegisterDto, @CurrentUser() user: AuthenticatedUser) {
     return this.cashService.openRegister(dto, user);
@@ -35,31 +35,32 @@ export class CashController {
    * declaración y `:id` capturaría la palabra "statement".
    *
    * De lectura, pero con `@Roles`: el extracto es el detalle completo del dinero
-   * de la sucursal. Un `Technician` o un `SalesAdvisor` no tienen por qué verlo
-   * (un handler sin `@Roles` queda abierto a cualquier rol autenticado).
+   * de la sucursal — se restringe a quien opera o supervisa la caja, no a
+   * cualquier rol autenticado (un handler sin `@Roles` queda abierto a todos).
    */
   @Get('statement')
-  @Roles(UserRole.Cashier, UserRole.BranchManager, UserRole.Accountant, UserRole.Auditor, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   getStatement(@Query() query: CashStatementQueryDto, @CurrentUser() user: AuthenticatedUser) {
     return this.cashService.getStatement(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.cashService.findOne(id);
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.cashService.findOne(id, user);
   }
 
   @Post(':id/movements')
-  @Roles(UserRole.Cashier, UserRole.BranchManager, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   @Audited('CashMovement', 'CashMovementRecorded')
-  recordMovement(@Param('id') id: string, @Body() dto: RecordMovementDto) {
-    return this.cashService.recordMovement(id, dto);
+  recordMovement(@Param('id') id: string, @Body() dto: RecordMovementDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.cashService.recordMovement(id, dto, user);
   }
 
   @Post(':id/close')
   @Roles(UserRole.BranchManager, UserRole.Admin)
   @Audited('CashRegister', 'CashRegisterClosed')
-  close(@Param('id') id: string, @Body() dto: CloseRegisterDto) {
-    return this.cashService.closeRegister(id, dto);
+  close(@Param('id') id: string, @Body() dto: CloseRegisterDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.cashService.closeRegister(id, dto, user);
   }
 }

@@ -14,7 +14,7 @@ export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
   @Post()
-  @Roles(UserRole.Cashier, UserRole.SalesAdvisor, UserRole.Admin)
+  @Roles(UserRole.SalesAdvisor, UserRole.Admin)
   @Audited('Customer', 'CustomerRegistered')
   create(@Body() dto: CreateCustomerDto, @CurrentUser() user: AuthenticatedUser) {
     return this.customersService.create(dto, user);
@@ -31,7 +31,7 @@ export class CustomersController {
   }
 
   @Patch(':id/flag')
-  @Roles(UserRole.BranchManager, UserRole.Auditor, UserRole.Admin)
+  @Roles(UserRole.BranchManager, UserRole.Admin)
   @Audited('Customer', 'CustomerFlagged')
   setFlagged(
     @Param('id') id: string,
