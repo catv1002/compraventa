@@ -6,6 +6,14 @@ import { AuthenticatedUser } from '../security/current-user.decorator';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { ImportItemsDto } from './dto/import-items.dto';
+
+export interface ImportRowResult {
+  row: number;
+  status: 'created' | 'error';
+  itemId?: string;
+  reason?: string;
+}
 import { DomainEventNames, ItemReceivedEvent } from '../../shared/domain-events/events';
 import { resolveAttributeSchema, validateItemAttributes } from './attributes/attribute-validator';
 
@@ -117,6 +125,85 @@ export class InventoryService {
     );
 
     return item;
+  }
+
+  /**
+   * Importación masiva de inventario desde CSV (ver ImportPage). La clase de
+   * artículo se busca por nombre o por `legacyCode` (el código de 5 dígitos
+   * del sistema legado, "00102") — así una migración puede traer el código
+   * tal cual venía sin tener que remapearlo a mano fila por fila. Fila por
+   * fila, no todo-o-nada: un peso faltante en una fila no debe descartar el
+   * resto del archivo — mismo criterio que `CustomersService.importRows`.
+   */
+  async importItems(dto: ImportItemsDto, currentUser: AuthenticatedUser): Promise<ImportRowResult[]> {
+    const categories = await this.prisma.category.findMany({
+      where: { tenantId: currentUser.tenantId },
+      include: { parentCategory: true },
+    });
+
+    const results: ImportRowResult[] = [];
+
+    for (const [index, row] of dto.rows.entries()) {
+      const rowNumber = index + 2;
+      const categoryQuery = row.category?.trim();
+      if (!categoryQuery) {
+        results.push({ row: rowNumber, status: 'error', reason: 'Falta la clase de artículo' });
+        continue;
+      }
+
+      const category = categories.find((c) => {
+        if (c.name.toLowerCase() === categoryQuery.toLowerCase()) return true;
+        const schema = resolveAttributeSchema(c.attributeSchema, c.parentCategory?.attributeSchema);
+        return schema.legacyCode === categoryQuery;
+      });
+      if (!category) {
+        results.push({ row: rowNumber, status: 'error', reason: `Clase de artículo "${categoryQuery}" no encontrada` });
+        continue;
+      }
+
+      const schema = resolveAttributeSchema(category.attributeSchema, category.parentCategory?.attributeSchema);
+      const attributeInputs: { key: string; value: string }[] = [];
+      if (row.weightGrams?.trim()) attributeInputs.push({ key: 'weightGrams', value: row.weightGrams.trim() });
+      if (row.karats?.trim()) attributeInputs.push({ key: 'karats', value: row.karats.trim() });
+
+      const validation = validateItemAttributes(attributeInputs, schema, category.name);
+      if (!validation.ok) {
+        results.push({ row: rowNumber, status: 'error', reason: validation.errors.join('; ') });
+        continue;
+      }
+
+      const costBasisRaw = row.costBasis?.trim();
+      const costBasis = costBasisRaw ? Number(costBasisRaw) : 0;
+      if (costBasisRaw && (Number.isNaN(costBasis) || costBasis < 0)) {
+        results.push({ row: rowNumber, status: 'error', reason: `Costo inválido: "${costBasisRaw}"` });
+        continue;
+      }
+
+      try {
+        const item = await this.prisma.item.create({
+          data: {
+            tenantId: currentUser.tenantId,
+            branchId: currentUser.homeBranchId,
+            categoryId: category.id,
+            serialNumber: row.serialNumber?.trim() || undefined,
+            description: row.description?.trim() || undefined,
+            status: ItemStatus.Received,
+            costBasis,
+            attributes:
+              validation.attributes.length > 0 ? { createMany: { data: validation.attributes } } : undefined,
+          },
+        });
+        results.push({ row: rowNumber, status: 'created', itemId: item.id });
+      } catch (err) {
+        results.push({
+          row: rowNumber,
+          status: 'error',
+          reason: err instanceof Error ? err.message : 'Error desconocido al crear el artículo',
+        });
+      }
+    }
+
+    return results;
   }
 
   listItems(

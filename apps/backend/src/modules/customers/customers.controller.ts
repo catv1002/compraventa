@@ -6,6 +6,7 @@ import { CurrentUser, AuthenticatedUser } from '../security/current-user.decorat
 import { Audited } from '../../shared/audit/audited.decorator';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import { ImportCustomersDto } from './dto/import-customers.dto';
 import { UserRole } from '@prisma/client';
 
 @Controller('customers')
@@ -18,6 +19,13 @@ export class CustomersController {
   @Audited('Customer', 'CustomerRegistered')
   create(@Body() dto: CreateCustomerDto, @CurrentUser() user: AuthenticatedUser) {
     return this.customersService.create(dto, user);
+  }
+
+  @Post('import')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
+  @Audited('Customer', 'CustomersImported')
+  importRows(@Body() dto: ImportCustomersDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.customersService.importRows(dto, user);
   }
 
   @Get()

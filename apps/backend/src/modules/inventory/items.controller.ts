@@ -8,6 +8,7 @@ import { Audited } from '../../shared/audit/audited.decorator';
 import { InventoryService } from './inventory.service';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { ImportItemsDto } from './dto/import-items.dto';
 
 @Controller('items')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -19,6 +20,13 @@ export class ItemsController {
   @Audited('Item', 'ItemReceived')
   create(@Body() dto: CreateItemDto, @CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.createItem(dto, user);
+  }
+
+  @Post('import')
+  @Roles(UserRole.BranchManager, UserRole.Admin)
+  @Audited('Item', 'ItemsImported')
+  importRows(@Body() dto: ImportItemsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.inventoryService.importItems(dto, user);
   }
 
   @Get()

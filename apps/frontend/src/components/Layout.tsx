@@ -24,6 +24,7 @@ const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: string[] }[
   },
   { to: '/cierre-del-dia', label: 'Cierre del día', roles: ['BranchManager', 'Admin'] },
   { to: '/reportes', label: 'Reportes', roles: ['BranchManager', 'Admin'] },
+  { to: '/migracion', label: 'Migración', roles: ['BranchManager', 'Admin'] },
   { to: '/contabilidad', label: 'Contabilidad', roles: ['Admin'] },
   { to: '/sucursales', label: 'Sucursales' },
   { to: '/usuarios', label: 'Usuarios', roles: ['Admin'] },

@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DailyClosePage } from './pages/DailyClosePage';
 import { RangeReportPage } from './pages/RangeReportPage';
+import { ImportPage } from './pages/ImportPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { ContractsPage } from './pages/ContractsPage';
@@ -39,6 +40,7 @@ export function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/cierre-del-dia" element={<DailyClosePage />} />
                 <Route path="/reportes" element={<RangeReportPage />} />
+                <Route path="/migracion" element={<ImportPage />} />
                 <Route path="/clientes" element={<CustomersPage />} />
                 <Route path="/inventario" element={<InventoryPage />} />
                 <Route path="/contratos" element={<ContractsPage />} />
