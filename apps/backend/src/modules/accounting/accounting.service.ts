@@ -29,6 +29,21 @@ export class AccountingService {
     });
     const accountByCode = new Map(accounts.map((a) => [a.code, a]));
 
+    // Falla explícita, no un TypeError silencioso: `CHART_OF_ACCOUNTS` solo
+    // se siembra vía `prisma/seed.ts` para el tenant que se está
+    // provisionando — si se agrega una cuenta nueva (ej. 1105/5200 en Fase 7)
+    // y un tenant existente no vuelve a correr el seed, cada intento de
+    // postear a esa cuenta reventaba con `Cannot read properties of
+    // undefined` dentro de un cron nocturno que solo lo loguea y sigue,
+    // dejando el asiento sin contabilizar sin que nadie se entere.
+    const missing = lines.map((l) => l.accountCode).filter((code) => !accountByCode.has(code));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `No se puede postear el asiento (${sourceEvent}): faltan las cuentas ${missing.join(', ')} ` +
+          `en el plan de cuentas del tenant ${tenantId}. Corra el seed de cuentas para este tenant.`,
+      );
+    }
+
     return this.prisma.journalEntry.create({
       data: {
         tenantId,

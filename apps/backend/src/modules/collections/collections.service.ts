@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ContractStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
@@ -33,7 +33,21 @@ export class CollectionsService {
     });
   }
 
-  logContact(contractId: string, dto: LogContactDto, currentUser: AuthenticatedUser) {
+  // Escritura cross-tenant (CV-016): sin verificar que el contrato sea del
+  // mismo tenant, cualquier BranchManager/Admin autenticado podía crear un
+  // CollectionContactAttempt contra un contractId de OTRO tenant si lo
+  // conocía/adivinaba — más grave que la fuga de lectura que ya se cerró en
+  // `contactHistory`, porque esta contamina el historial ajeno, no solo lo
+  // lee.
+  async logContact(contractId: string, dto: LogContactDto, currentUser: AuthenticatedUser) {
+    const contract = await this.prisma.contract.findFirst({
+      where: { id: contractId, tenantId: currentUser.tenantId },
+      select: { id: true },
+    });
+    if (!contract) {
+      throw new NotFoundException('Contrato no encontrado');
+    }
+
     return this.prisma.collectionContactAttempt.create({
       data: {
         contractId,

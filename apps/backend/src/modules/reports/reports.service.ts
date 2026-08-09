@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CashMovementType, CashRegisterStatus, ContractMovementType, ContractType, ItemStatus } from '@prisma/client';
+import { CashMovementType, CashRegisterStatus, ContractMovementType, ContractStatus, ContractType, ItemStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { DailyCloseQueryDto } from './dto/daily-close-query.dto';
@@ -257,7 +257,13 @@ export class ReportsService {
         contractId: { not: null },
         createdAt: { gte: from, lte: to },
         cashRegister: { branchId },
-        contract: { contractType: ContractType.Sale },
+        // Excluye ventas devueltas (Cancelled): returnSale() ya reversó el
+        // dinero con su propio CashOut, pero ese CashOut no tiene
+        // sourceType:'Contract' filtrando por Sale, así que sin este filtro
+        // la venta original seguía contando íntegra en el día en que se
+        // hizo, aunque ya se hubiera devuelto — divergía de `accounting`,
+        // que sí reversa el asiento vía `onSaleReturned`.
+        contract: { contractType: ContractType.Sale, status: { not: ContractStatus.Cancelled } },
       },
     });
     return Number(result._sum.amount ?? 0);
@@ -351,6 +357,9 @@ export class ReportsService {
         tenantId,
         branchId,
         contractType: ContractType.Sale,
+        // Mismo criterio que ventasDelDia: una venta devuelta (Cancelled) ya
+        // no es utilidad real, aunque haya ocurrido dentro del rango.
+        status: { not: ContractStatus.Cancelled },
         createdAt: { gte: from, lte: to },
       },
       select: { principalAmount: true, item: { select: { costBasis: true } } },
@@ -360,12 +369,15 @@ export class ReportsService {
 
   /**
    * Utilidad de empeño liquidado el día consultado: el sobrecosto
-   * (interés) cobrado al liquidar, `ContractMovement.amount - principalAmount`
+   * (interés) cobrado al liquidar, `ContractMovement.amount - capital VIGENTE`
    * por cada `Settlement` de un contrato `Pawn` en el rango. El capital
-   * liquidado no es utilidad (es la devolución del préstamo), solo el
-   * sobrecosto lo es — mismo criterio que ya usa `onContractSettled` en el
-   * listener contable (`settlementAmount - principalAmount`), aquí aplicado
-   * como reporte de lectura, no como asiento.
+   * vigente es `principalAmount - paidAmount`, NO `principalAmount` a secas:
+   * si hubo un abono a capital (`payPrincipal`) antes de liquidar, el capital
+   * original ya no es lo que salió de la liquidación, y restarlo subestima
+   * el interés reportado en exactamente el monto del abono previo. Mismo
+   * cálculo que `onContractSettled` ya usa para el asiento contable
+   * (`accounting-events.listener.ts`) — antes este reporte usaba una fórmula
+   * distinta a la del libro contable para el mismo hecho económico.
    */
   private async utilidadInteresEmpenoDelDia(tenantId: string, branchId: string, from: Date, to: Date): Promise<number> {
     const settlements = await this.prisma.contractMovement.findMany({
@@ -374,10 +386,11 @@ export class ReportsService {
         movementDate: { gte: from, lte: to },
         contract: { tenantId, branchId, contractType: ContractType.Pawn },
       },
-      select: { amount: true, contract: { select: { principalAmount: true } } },
+      select: { amount: true, contract: { select: { principalAmount: true, paidAmount: true } } },
     });
     return settlements.reduce(
-      (sum, s) => sum + (Number(s.amount) - Number(s.contract.principalAmount)),
+      (sum, s) =>
+        sum + (Number(s.amount) - (Number(s.contract.principalAmount) - Number(s.contract.paidAmount))),
       0,
     );
   }

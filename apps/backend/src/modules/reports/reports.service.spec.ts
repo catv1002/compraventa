@@ -90,7 +90,7 @@ describe('ReportsService', () => {
     it('utilidadInteresEmpenoDelDia lee liquidaciones (ContractMovement Settlement) de Pawn, no contratos Sale', async () => {
       const prisma = buildPrisma();
       prisma.contractMovement.findMany.mockResolvedValue([
-        { amount: 1_072_000, contract: { principalAmount: 1_000_000 } },
+        { amount: 1_072_000, contract: { principalAmount: 1_000_000, paidAmount: 0 } },
       ]);
       const service = new ReportsService(prisma as any);
       const from = new Date('2026-08-01T00:00:00.000Z');
@@ -114,7 +114,7 @@ describe('ReportsService', () => {
       const prisma = buildPrisma();
       prisma.contract.findMany.mockResolvedValue([{ principalAmount: 900_000, item: { costBasis: 400_000 } }]);
       prisma.contractMovement.findMany.mockResolvedValue([
-        { amount: 520_000, contract: { principalAmount: 500_000 } },
+        { amount: 520_000, contract: { principalAmount: 500_000, paidAmount: 0 } },
       ]);
       const service = new ReportsService(prisma as any);
       const from = new Date();
