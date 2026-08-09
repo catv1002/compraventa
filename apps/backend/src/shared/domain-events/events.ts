@@ -27,7 +27,25 @@ export class DisbursementIssuedEvent {
 }
 
 export class ContractSettledEvent {
-  constructor(public readonly contractId: string, public readonly itemId: string, public readonly settlementAmount: number) {}
+  constructor(
+    public readonly contractId: string,
+    public readonly itemId: string,
+    public readonly settlementAmount: number,
+    // `interestPaidThrough` DEL CONTRATO ANTES de que settle() lo adelantara
+    // a la fecha de liquidación en su propia transacción. El catch-up de
+    // causación (accrueInterest, disparado por este evento) necesita este
+    // valor VIEJO como punto de partida del cálculo — si relee el campo ya
+    // avanzado, el cálculo queda desacoplado del período real pendiente de
+    // causar (ver Fase 13, hallazgo del agente de integración end-to-end).
+    public readonly interestPaidThroughBeforeSettlement: Date | null = null,
+    // Mismo `asOf` que settle() ya usó para su propia cotización
+    // (quoteSettlement) — el catch-up debe anclarse al MISMO instante, no a
+    // uno nuevo capturado milisegundos después, para que el monto que causa
+    // contra 1150/4100 sea exactamente el que la liquidación va a acreditar
+    // de 1150. Sin esto, un límite de mes cruzado entre ambas lecturas de
+    // reloj (por remota que sea la probabilidad) dejaría un residuo en 1150.
+    public readonly settlementAsOf: Date = new Date(),
+  ) {}
 }
 
 export class ContractDefaultedEvent {

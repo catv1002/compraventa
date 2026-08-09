@@ -832,7 +832,8 @@ export class ContractsService {
       }
     }
 
-    const input = await this.buildQuoteInput(contract, new Date());
+    const settlementAsOf = new Date();
+    const input = await this.buildQuoteInput(contract, settlementAsOf);
     const { principal, interest, total } = quoteSettlement(input);
 
     if (dto.expectedTotal !== undefined && Math.abs(dto.expectedTotal - total) > 0.009) {
@@ -920,7 +921,11 @@ export class ContractsService {
     // (contabilidad, inventario) leen la base y no deben ver estado sin commit.
     await this.eventEmitter.emitAsync(
       DomainEventNames.ContractSettled,
-      new ContractSettledEvent(contractId, contract.itemId, total),
+      // `contract.interestPaidThrough` es el valor de ANTES de este método
+      // (capturado en `getActiveOrOverdue` arriba, antes de la transacción
+      // que lo adelantó a `settledAt`) — el catch-up de causación lo necesita
+      // como punto de partida real, no el que ya quedó pisado en la BD.
+      new ContractSettledEvent(contractId, contract.itemId, total, contract.interestPaidThrough, settlementAsOf),
     );
 
     return { ...settled, settlementTotal: total, settlementPrincipal: principal, settlementInterest: interest };

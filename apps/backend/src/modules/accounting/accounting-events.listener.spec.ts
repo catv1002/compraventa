@@ -160,6 +160,75 @@ describe('AccountingEventsListener', () => {
 
       expect(accountingService.postEntry).not.toHaveBeenCalled();
     });
+
+    it('el catch-up causa el interés PENDIENTE real, no un mes fijo desacoplado del gap (Fase 13, segundo intento)', async () => {
+      // El primer intento de este fix (aceptar Settled en el guard de
+      // accrueInterest) no bastaba: settle() ya había adelantado
+      // `interestPaidThrough` a la fecha de liquidación EN SU PROPIA
+      // transacción, antes de emitir el evento. Si el catch-up releía ese
+      // campo de la BD, "lo ya causado" y "lo debido hoy" quedaban ambos
+      // anclados al mismo chargingFrom recién adelantado, dando SIEMPRE
+      // exactamente 1 mes de diferencia sin importar el gap real — un sesgo
+      // sistemático, no el cálculo correcto. Este test lo habría detectado:
+      // reproduce que settle() ya avanzó el campo (interestPaidThrough del
+      // MOCK queda en la fecha de liquidación) y verifica que el evento trae
+      // el valor VIEJO por separado, y que el monto causado corresponde al
+      // gap real (1 mes: de accruedThrough=07-01 a asOf=08-01), no un valor
+      // fijo casual.
+      const { listener, prisma, accountingService } = buildHarness();
+      const accrualStart = new Date('2026-06-01T00:00:00.000Z');
+      const alreadyAccruedThrough = new Date('2026-07-01T00:00:00.000Z'); // 1 mes ya causado
+      const settlementAsOf = new Date('2026-08-01T00:00:00.000Z'); // liquida un mes después
+      // Simula el estado en que settle() DEJA la fila tras su propia
+      // transacción: interestPaidThrough ya en la fecha de liquidación.
+      const contract = pawnContract({
+        interestAccrualStart: accrualStart,
+        interestAccruedThrough: alreadyAccruedThrough,
+        interestPaidThrough: settlementAsOf,
+      });
+      prisma.contract.findUnique.mockResolvedValue(contract);
+
+      // El total de liquidación (lo que calculó settle() con el chargingFrom
+      // VIEJO, null -> accrualStart): 2 meses de interés (80.000) + capital
+      // (1.000.000) = 1.080.000.
+      const settlementAmount = 1_000_000 + 80_000;
+      const event = new ContractSettledEvent(
+        'c-1',
+        'item-1',
+        settlementAmount,
+        null, // interestPaidThrough ANTES de settle() — nunca se había cobrado interés
+        settlementAsOf,
+      );
+      await listener.onContractSettled(event);
+
+      // Catch-up: de 1 mes ya causado (accruedThrough=07-01) a 2 meses
+      // debidos hoy (asOf=08-01) — la diferencia real es 1 mes (40.000), no
+      // un valor fijo coincidente con el bug viejo.
+      const accrualCall = accountingService.postEntry.mock.calls.find(
+        (call: any[]) => call[1] === 'InterestAccrued',
+      );
+      expect(accrualCall).toBeDefined();
+      const [, , accrualEntry] = accrualCall!;
+      expect(accrualEntry).toEqual([
+        { accountCode: '1150', debit: 40_000, branchId: 'b-1' },
+        { accountCode: '4100', credit: 40_000, branchId: 'b-1' },
+      ]);
+
+      // El asiento de liquidación credita 1150 por el interestPortion total
+      // (80.000: capital vigente 1.000.000 vs settlementAmount 1.080.000).
+      // Sumado a los 40.000 ya causados en una corrida anterior (fuera de
+      // este test) más los 40.000 de este catch-up, 1150 cierra en CERO para
+      // este contrato — no queda erosionada ni con residuo.
+      const settledCall = accountingService.postEntry.mock.calls.find(
+        (call: any[]) => call[1] === DomainEventNames.ContractSettled,
+      );
+      const [, , settledEntry] = settledCall!;
+      expect(settledEntry).toEqual([
+        { accountCode: '1000', debit: settlementAmount, branchId: 'b-1' },
+        { accountCode: '1100', credit: 1_000_000, branchId: 'b-1' },
+        { accountCode: '1150', credit: 80_000, branchId: 'b-1' },
+      ]);
+    });
   });
 
   describe('onContractDefaulted', () => {

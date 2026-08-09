@@ -77,7 +77,25 @@ export class AccountingEventsListener {
   // via `getActiveOrOverdue`/el filtro del cron), así que el único llamador
   // real que puede alcanzar este método con un contrato `Settled` es este
   // mismo catch-up.
-  async accrueInterest(contractId: string, asOf: Date = new Date()) {
+  //
+  // `paidThroughOverride`: el primer intento de este fix reutilizaba
+  // `contract.interestPaidThrough` leído de la BD — pero `settle()` ya lo
+  // había adelantado a la fecha de liquidación EN LA MISMA transacción que
+  // puso `status: Settled`, antes de emitir el evento. Con `chargingFrom =
+  // paidThrough ?? accrualStart` (interest-calculator.ts), eso hacía que
+  // "lo ya causado" (asOf = interestAccruedThrough, siempre anterior al
+  // nuevo chargingFrom) diera sistemáticamente 0, y "lo debido hoy" (asOf =
+  // ahora, unos milisegundos después del mismo chargingFrom) diera
+  // sistemáticamente 1 mes bajo FullMonthCeil — un sesgo fijo de ~1 mes en
+  // CADA liquidación, desacoplado del gap real. `paidThroughOverride` deja
+  // pasar explícitamente el valor de ANTES de que settle() lo tocara
+  // (`ContractSettledEvent.interestPaidThroughBeforeSettlement`), para que
+  // el catch-up calcule sobre la frontera real, no sobre la ya adelantada.
+  async accrueInterest(
+    contractId: string,
+    asOf: Date = new Date(),
+    paidThroughOverride?: Date | null,
+  ) {
     const contract = await this.prisma.contract.findUnique({ where: { id: contractId } });
     if (!contract || contract.contractType !== ContractType.Pawn) return null;
     if (
@@ -100,12 +118,13 @@ export class AccountingEventsListener {
     const accrualStart = contract.interestAccrualStart ?? contract.createdAt;
     const alreadyAccruedThrough = contract.interestAccruedThrough ?? accrualStart;
     const principal = Number(contract.principalAmount) - Number(contract.paidAmount);
+    const paidThrough = paidThroughOverride !== undefined ? paidThroughOverride : contract.interestPaidThrough;
 
     // Cuánto se debía a la fecha de corte ya causada...
     const alreadyQuote = quoteInterest({
       principal,
       accrualStart,
-      paidThrough: contract.interestPaidThrough,
+      paidThrough,
       asOf: alreadyAccruedThrough,
       policy,
     });
@@ -113,7 +132,7 @@ export class AccountingEventsListener {
     const nowQuote = quoteInterest({
       principal,
       accrualStart,
-      paidThrough: contract.interestPaidThrough,
+      paidThrough,
       asOf,
       policy,
     });
@@ -167,8 +186,11 @@ export class AccountingEventsListener {
     const contract = await this.prisma.contract.findUnique({ where: { id: event.contractId } });
     if (!contract || contract.contractType !== ContractType.Pawn) return;
 
-    // Catch-up: causa el interés pendiente hasta hoy antes de liquidar.
-    await this.accrueInterest(contract.id);
+    // Catch-up: causa el interés pendiente hasta hoy antes de liquidar. Se
+    // pasan explícitamente el `paidThrough` de ANTES de settle() y el mismo
+    // `asOf` que settle() usó para cotizar el total — ver el comentario en
+    // ContractSettledEvent y el de accrueInterest para el porqué.
+    await this.accrueInterest(contract.id, event.settlementAsOf, event.interestPaidThroughBeforeSettlement);
 
     // El capital que sale de `1100` es el CAPITAL VIGENTE al momento de
     // liquidar (principalAmount - paidAmount), no el capital original del
