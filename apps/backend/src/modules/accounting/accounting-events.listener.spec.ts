@@ -14,6 +14,7 @@ import { ContractStatus, ContractType } from '@prisma/client';
 import { AccountingEventsListener } from './accounting-events.listener';
 import {
   CashMovementRecordedEvent,
+  ContractDefaultedEvent,
   ContractSettledEvent,
   DomainEventNames,
   ItemSoldEvent,
@@ -158,6 +159,66 @@ describe('AccountingEventsListener', () => {
       await listener.onContractSettled(new ContractSettledEvent('c-1', 'item-1', 100));
 
       expect(accountingService.postEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onContractDefaulted', () => {
+    it('postea el asiento de remate y reversa la provisión acumulada, atómicos en la misma transacción (Fase 13)', async () => {
+      const { listener, prisma, accountingService } = buildHarness();
+      const contract = pawnContract({
+        status: ContractStatus.Forfeited,
+        provisionedAmount: 150_000,
+      });
+      prisma.contract.findUnique.mockResolvedValue(contract);
+
+      const event = new ContractDefaultedEvent('c-1', 'item-1', 300_000);
+      await listener.onContractDefaulted(event);
+
+      // El asiento de remate se postea con el capital vigente que ya trae el evento.
+      expect(accountingService.postEntry).toHaveBeenCalledWith(
+        't-1',
+        DomainEventNames.ContractDefaulted,
+        [
+          { accountCode: '1200', debit: 300_000, branchId: 'b-1' },
+          { accountCode: '1100', credit: 300_000, branchId: 'b-1' },
+        ],
+        prisma,
+      );
+      // La provisión acumulada (150.000) se reversa en la MISMA transacción.
+      expect(accountingService.postEntry).toHaveBeenCalledWith(
+        't-1',
+        'CarteraProvisionReversed',
+        [
+          { accountCode: '1105', debit: 150_000, branchId: 'b-1' },
+          { accountCode: '5200', credit: 150_000, branchId: 'b-1' },
+        ],
+        prisma,
+      );
+      expect(prisma.contract.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { provisionedAmount: 0 },
+      });
+      // Ambos postEntry comparten el mismo `tx` (el mock de $transaction pasa
+      // `prisma` como tx) — confirma que están dentro de la misma transacción,
+      // no como dos pasos sueltos que podrían quedar a medias.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('no reversa nada si el contrato no tenía provisión acumulada', async () => {
+      const { listener, prisma, accountingService } = buildHarness();
+      const contract = pawnContract({ status: ContractStatus.Forfeited, provisionedAmount: 0 });
+      prisma.contract.findUnique.mockResolvedValue(contract);
+
+      await listener.onContractDefaulted(new ContractDefaultedEvent('c-1', 'item-1', 300_000));
+
+      expect(accountingService.postEntry).toHaveBeenCalledTimes(1); // solo el asiento de remate
+      expect(accountingService.postEntry).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'CarteraProvisionReversed',
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(prisma.contract.update).not.toHaveBeenCalled();
     });
   });
 
