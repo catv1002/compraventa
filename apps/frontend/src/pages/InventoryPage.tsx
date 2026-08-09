@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
 import { Modal } from '../components/Modal';
+import { BarcodeScanButton } from '../components/BarcodeScanButton';
 import { useAuth } from '../lib/auth-context';
 
 /**
@@ -169,6 +170,18 @@ export function InventoryPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [codeSearch, setCodeSearch] = useState('');
+
+  // Funciona igual con un lector físico (escribe y termina en Enter, como un
+  // teclado) que con la cámara (llena el mismo campo al leer). Coincidencia
+  // por substring, no exacta: sirve tanto para pegar un código completo como
+  // para teclear el final de un serial a mano.
+  const visibleItems = codeSearch.trim()
+    ? (items ?? []).filter((i) => {
+        const needle = codeSearch.trim().toLowerCase();
+        return i.id.toLowerCase().includes(needle) || (i.serialNumber ?? '').toLowerCase().includes(needle);
+      })
+    : items;
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
@@ -329,8 +342,33 @@ export function InventoryPage() {
 
       {user?.role !== 'SalesAdvisor' && <MetalPricesStrip />}
 
+      <div className="mb-4 flex items-center gap-2">
+        <input
+          value={codeSearch}
+          onChange={(e) => setCodeSearch(e.target.value)}
+          placeholder="Buscar por código (lector físico o pegar código)…"
+          aria-label="Buscar artículo por código"
+          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+        />
+        <BarcodeScanButton onScan={setCodeSearch} />
+        {codeSearch && (
+          <button
+            type="button"
+            onClick={() => setCodeSearch('')}
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-500 hover:bg-slate-50"
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+      {codeSearch && (
+        <p className="mb-2 text-xs text-slate-500">
+          {visibleItems?.length ?? 0} artículo(s) coinciden con «{codeSearch}».
+        </p>
+      )}
+
       <div className="space-y-2">
-        {items?.map((item) => {
+        {visibleItems?.map((item) => {
           const weight = item.attributes?.find((a) => a.key === 'weightGrams')?.value;
           const karat = item.attributes?.find((a) => a.key === 'karats')?.value;
 
@@ -341,6 +379,12 @@ export function InventoryPage() {
             >
               <div>
                 <p className="font-medium text-slate-800">
+                  <span
+                    className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600"
+                    title="Código para buscar este artículo (escanéalo o pégalo en el buscador)"
+                  >
+                    {item.id.slice(0, 8)}
+                  </span>
                   {item.category.name}
                   {weight ? ` · ${weight} g` : ''}
                   {karat ? ` · ${karat}` : ''}
