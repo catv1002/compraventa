@@ -160,17 +160,29 @@ export class AccountingEventsListener {
     const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
     const interestPortion = event.settlementAmount - outstandingPrincipal;
 
-    await this.accountingService.postEntry(contract.tenantId, DomainEventNames.ContractSettled, [
-      { accountCode: '1000', debit: event.settlementAmount, branchId: contract.branchId },
-      { accountCode: '1100', credit: outstandingPrincipal, branchId: contract.branchId },
-      { accountCode: '1150', credit: interestPortion, branchId: contract.branchId },
-    ]);
+    // El asiento de liquidación y la reversión de provisión se confirman
+    // juntos (Fase 9, cerrando un gap que la propia verificación adversarial
+    // de esta fase encontró): son dos pasos sueltos que antes podían quedar
+    // a medias si el proceso moría entre uno y otro — el asiento de
+    // liquidación posteado pero la provisión de 1105/5200 sin reversar, el
+    // mismo saldo huérfano que esta fase existe para eliminar.
+    await this.prisma.$transaction(async (tx) => {
+      await this.accountingService.postEntry(
+        contract.tenantId,
+        DomainEventNames.ContractSettled,
+        [
+          { accountCode: '1000', debit: event.settlementAmount, branchId: contract.branchId },
+          { accountCode: '1100', credit: outstandingPrincipal, branchId: contract.branchId },
+          { accountCode: '1150', credit: interestPortion, branchId: contract.branchId },
+        ],
+        tx,
+      );
 
-    // El contrato ya no puede volver a estar en mora bajo este número — si
-    // traía provisión de cartera acumulada (estuvo Overdue/Forfeited antes de
-    // liquidarse), se reversa completa. Sin esto, 1105/5200 quedaban con
-    // saldo huérfano indefinido para deuda que ya se cobró.
-    await this.reverseProvisionIfOutOfDefault(contract.id);
+      // El contrato ya no puede volver a estar en mora bajo este número — si
+      // traía provisión de cartera acumulada (estuvo Overdue/Forfeited antes
+      // de liquidarse), se reversa completa.
+      await this.reverseProvisionIfOutOfDefault(contract.id, tx);
+    });
   }
 
   // Un abono a capital mueve dinero real a caja y reduce la cartera de
