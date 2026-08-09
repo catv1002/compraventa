@@ -25,8 +25,9 @@ export class AppraisalsController {
   }
 
   @Get()
-  findAll(@Param('itemId') itemId: string) {
-    return this.appraisalsService.findByItem(itemId);
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
+  findAll(@Param('itemId') itemId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.appraisalsService.findByItem(itemId, user);
   }
 
   // Solo lectura/orientación: cualquier rol autenticado puede consultarlo, no

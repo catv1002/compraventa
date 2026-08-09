@@ -57,8 +57,15 @@ export class AppraisalsService {
     return appraisal;
   }
 
-  findByItem(itemId: string) {
-    return this.prisma.appraisal.findMany({ where: { itemId }, orderBy: { createdAt: 'desc' } });
+  // CV-016: sin el filtro de tenant vía la relación del artículo, cualquier
+  // usuario autenticado de CUALQUIER tenant que conociera/adivinara un
+  // itemId ajeno podía leer su historial de avalúos completo — no era solo
+  // falta de @Roles, era una fuga de lectura cross-tenant.
+  findByItem(itemId: string, currentUser: AuthenticatedUser) {
+    return this.prisma.appraisal.findMany({
+      where: { itemId, item: { tenantId: currentUser.tenantId } },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   /**
