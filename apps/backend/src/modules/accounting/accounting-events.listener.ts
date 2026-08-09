@@ -63,10 +63,28 @@ export class AccountingEventsListener {
    * (`onInterestPaymentRecorded`) o liquidación (`onContractSettled`), para que
    * nunca se contabilice un cobro mayor a lo ya causado.
    */
+  // `Settled` se acepta además de Active/Overdue por una razón puntual
+  // (Fase 13, hallazgo del agente de integración end-to-end): `settle()`
+  // confirma su transacción (que ya deja el contrato en `Settled`) ANTES de
+  // emitir `ContractSettledEvent`, así que cuando `onContractSettled` llama
+  // a este catch-up, el contrato YA está `Settled` en la BD — con el guard
+  // viejo (solo Active/Overdue), el catch-up era un no-op permanente en
+  // cada liquidación, y `1150` se erosionaba (crédito de más) mientras
+  // `4100` quedaba subestimado en el interés devengado entre la última
+  // corrida del cron y el momento exacto de liquidar. No hay riesgo de que
+  // esto reabra la puerta a un cobro indebido: un contrato `Settled` nunca
+  // vuelve a pasar por `payInterest`/el cron (ambos exigen Active/Overdue
+  // via `getActiveOrOverdue`/el filtro del cron), así que el único llamador
+  // real que puede alcanzar este método con un contrato `Settled` es este
+  // mismo catch-up.
   async accrueInterest(contractId: string, asOf: Date = new Date()) {
     const contract = await this.prisma.contract.findUnique({ where: { id: contractId } });
     if (!contract || contract.contractType !== ContractType.Pawn) return null;
-    if (contract.status !== ContractStatus.Active && contract.status !== ContractStatus.Overdue) {
+    if (
+      contract.status !== ContractStatus.Active &&
+      contract.status !== ContractStatus.Overdue &&
+      contract.status !== ContractStatus.Settled
+    ) {
       return null;
     }
 
@@ -212,10 +230,26 @@ export class AccountingEventsListener {
     const contract = await this.prisma.contract.findUnique({ where: { id: event.contractId } });
     if (!contract) return;
 
-    await this.accountingService.postEntry(contract.tenantId, DomainEventNames.ContractDefaulted, [
-      { accountCode: '1200', debit: event.outstandingPrincipal, branchId: contract.branchId },
-      { accountCode: '1100', credit: event.outstandingPrincipal, branchId: contract.branchId },
-    ]);
+    // El asiento de remate y la reversión de provisión se confirman juntos
+    // (Fase 13) — mismo criterio que onContractSettled/onContractRenewed:
+    // un contrato Forfeited ya no tiene cartera por cobrar en 1100 (se
+    // reclasificó a inventario en 1200), así que su provisión de deterioro
+    // en 1105/5200 tampoco tiene sentido dejarla acumulada. Sin esto,
+    // rematar un contrato dejaba el mismo saldo huérfano que ya se cerró
+    // para liquidación y renovación.
+    await this.prisma.$transaction(async (tx) => {
+      await this.accountingService.postEntry(
+        contract.tenantId,
+        DomainEventNames.ContractDefaulted,
+        [
+          { accountCode: '1200', debit: event.outstandingPrincipal, branchId: contract.branchId },
+          { accountCode: '1100', credit: event.outstandingPrincipal, branchId: contract.branchId },
+        ],
+        tx,
+      );
+
+      await this.reverseProvisionIfOutOfDefault(contract.id, tx);
+    });
   }
 
   @OnEvent(DomainEventNames.ItemSold)

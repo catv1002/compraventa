@@ -234,6 +234,10 @@ export class ContractsService {
       await this.inventoryService.transitionStatus(dto.itemId, ItemStatus.InStock);
       await this.inventoryService.incrementCostBasis(dto.itemId, dto.principalAmount);
       await this.eventEmitter.emitAsync(
+        DomainEventNames.DisbursementIssued,
+        new DisbursementIssuedEvent(contract.id, dto.principalAmount, currentUser.homeBranchId),
+      );
+      await this.eventEmitter.emitAsync(
         DomainEventNames.DirectPurchaseRegistered,
         new DirectPurchaseRegisteredEvent(contract.id, dto.itemId, dto.principalAmount),
       );
@@ -374,14 +378,18 @@ export class ContractsService {
     };
   }
 
+  // Solo escrituras — el evento lo emite el llamador DESPUÉS de confirmar su
+  // propia transacción, mismo criterio que settle()/payInterest/etc.
   private async recordDisbursement(
     contractId: string,
     cashRegisterId: string,
     amount: number,
     currentUser: AuthenticatedUser,
     paymentMethod: PaymentMethod = PaymentMethod.Cash,
+    tx?: Prisma.TransactionClient,
   ) {
-    await this.prisma.contractMovement.create({
+    const db = tx ?? this.prisma;
+    await db.contractMovement.create({
       data: { contractId, type: ContractMovementType.Disbursement, amount },
     });
     await this.cashService.recordMovement(
@@ -394,10 +402,7 @@ export class ContractsService {
         paymentMethod,
       },
       currentUser,
-    );
-    await this.eventEmitter.emitAsync(
-      DomainEventNames.DisbursementIssued,
-      new DisbursementIssuedEvent(contractId, amount, currentUser.homeBranchId),
+      tx,
     );
   }
 
@@ -421,22 +426,37 @@ export class ContractsService {
       throw new BadRequestException(`El contrato no admite desembolso en estado ${contract.status}`);
     }
 
-    await this.purchaseAllowancesService.consume(currentUser.userId, Number(contract.principalAmount), currentUser);
-    await this.recordDisbursement(contractId, cashRegisterId, Number(contract.principalAmount), currentUser, paymentMethod);
-    await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.InPledgeCustody);
-
+    // Cupo, movimiento de contrato, movimiento de caja, transición del
+    // artículo a custodia y el cambio de estado del contrato se confirman
+    // juntos (Fase 13): antes eran cuatro escrituras sueltas — un fallo a
+    // mitad de camino podía dejar dinero salido de caja con el contrato
+    // aún en `Created` y el artículo sin pasar a custodia.
+    const principalAmount = Number(contract.principalAmount);
     // El interés corre desde que el cliente recibe la plata, no desde que se
     // creó el contrato: entre ambos momentos el cliente todavía podía retirarse
     // sin deber nada (ver withdraw()).
     const disbursedAt = new Date();
-    return this.prisma.contract.update({
-      where: { id: contractId },
-      data: {
-        status: ContractStatus.Active,
-        interestAccrualStart: disbursedAt,
-        interestPaidThrough: null,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.purchaseAllowancesService.consume(currentUser.userId, principalAmount, currentUser, tx);
+      await this.recordDisbursement(contractId, cashRegisterId, principalAmount, currentUser, paymentMethod, tx);
+      await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.InPledgeCustody, tx);
+
+      return tx.contract.update({
+        where: { id: contractId },
+        data: {
+          status: ContractStatus.Active,
+          interestAccrualStart: disbursedAt,
+          interestPaidThrough: null,
+        },
+      });
     });
+
+    await this.eventEmitter.emitAsync(
+      DomainEventNames.DisbursementIssued,
+      new DisbursementIssuedEvent(contractId, principalAmount, currentUser.homeBranchId),
+    );
+
+    return updated;
   }
 
   // "Contrato Retirado": el cliente no acepta los términos entre el avalúo y
@@ -742,17 +762,24 @@ export class ContractsService {
       );
     }
 
-    await this.prisma.contractMovement.create({
-      data: { contractId, type: ContractMovementType.Renewal, amount: 0 },
-    });
+    // Movimiento de contrato + cambio de estado/vencimiento se confirman
+    // juntos (Fase 13): antes eran dos escrituras sueltas — si la segunda
+    // fallaba, quedaba un "Renewal" en el historial sin que el contrato
+    // hubiera cambiado de fecha/estado, mismo patrón que ya se corrigió en
+    // payInterest/payPrincipal/settle.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.contractMovement.create({
+        data: { contractId, type: ContractMovementType.Renewal, amount: 0 },
+      });
 
-    const updated = await this.prisma.contract.update({
-      where: { id: contractId },
-      data: {
-        status: ContractStatus.Renewed,
-        dueDate: new Date(dto.newDueDate),
-        renewalCount: contract.renewalCount + 1,
-      },
+      return tx.contract.update({
+        where: { id: contractId },
+        data: {
+          status: ContractStatus.Renewed,
+          dueDate: new Date(dto.newDueDate),
+          renewalCount: contract.renewalCount + 1,
+        },
+      });
     });
 
     // Renovar exige estar al día (`quote.isCurrent` arriba) y saca al
@@ -911,34 +938,45 @@ export class ContractsService {
       throw new BadRequestException(`El contrato no admite abonos en estado ${contract.status}`);
     }
 
-    await this.prisma.contractMovement.create({
-      data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
-    });
-    await this.cashService.recordMovement(
-      dto.cashRegisterId,
-      {
-        type: CashMovementType.CashIn,
-        amount: dto.amount,
-        sourceType: 'Contract',
-        contractId,
-        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
-      },
-      currentUser,
-    );
-
     const newPaidAmount = Number(contract.paidAmount) + dto.amount;
     const completed = newPaidAmount >= Number(contract.principalAmount);
 
-    const updated = await this.prisma.contract.update({
-      where: { id: contractId },
-      data: {
-        paidAmount: newPaidAmount,
-        status: completed ? ContractStatus.Settled : ContractStatus.Active,
-      },
+    // Movimiento de contrato, movimiento de caja, avance de paidAmount y (si
+    // completa) la transición del artículo a Sold se confirman juntos
+    // (Fase 13) — mismo criterio que payInterest/payPrincipal/settle.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.contractMovement.create({
+        data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
+      });
+      await this.cashService.recordMovement(
+        dto.cashRegisterId,
+        {
+          type: CashMovementType.CashIn,
+          amount: dto.amount,
+          sourceType: 'Contract',
+          contractId,
+          paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+        },
+        currentUser,
+        tx,
+      );
+
+      const result = await tx.contract.update({
+        where: { id: contractId },
+        data: {
+          paidAmount: newPaidAmount,
+          status: completed ? ContractStatus.Settled : ContractStatus.Active,
+        },
+      });
+
+      if (completed) {
+        await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.Sold, tx);
+      }
+
+      return result;
     });
 
     if (completed) {
-      await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.Sold);
       await this.eventEmitter.emitAsync(
         DomainEventNames.LayawayCompleted,
         new LayawayCompletedEvent(contractId, contract.itemId, contract.customerId, Number(contract.principalAmount)),
@@ -948,7 +986,18 @@ export class ContractsService {
     return updated;
   }
 
-  async cancelLayaway(contractId: string, penaltyAmount = 0, currentUser: AuthenticatedUser) {
+  // Cancelar un Plan Separe le debe efectivo al cliente (lo que abonó, menos
+  // la penalidad que se pacte) — antes `refundable` solo se calculaba y se
+  // devolvía en la respuesta HTTP, sin ningún `CashMovement` que registrara
+  // que ese dinero salió del cajón: el arqueo del día no lo veía. Ahora
+  // exige `cashRegisterId` cuando hay algo que devolver (igual que
+  // `settle`/`returnSale`) y lo asienta como `CashOut`.
+  async cancelLayaway(
+    contractId: string,
+    penaltyAmount: number,
+    currentUser: AuthenticatedUser,
+    cashRegisterId?: string,
+  ) {
     const contract = await this.findOwned(contractId, currentUser);
     if (!contract || contract.contractType !== ContractType.Layaway) {
       throw new BadRequestException('Este contrato no es un Plan Separe');
@@ -958,13 +1007,37 @@ export class ContractsService {
     }
 
     const refundable = Number(contract.paidAmount) - penaltyAmount;
+    if (refundable > 0 && !cashRegisterId) {
+      throw new BadRequestException(
+        `Hay que devolver ${refundable} al cliente: indique de qué caja sale el reembolso.`,
+      );
+    }
 
-    const cancelled = await this.prisma.contract.update({
-      where: { id: contractId },
-      data: { status: ContractStatus.Cancelled },
+    const cancelled = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.contract.update({
+        where: { id: contractId },
+        data: { status: ContractStatus.Cancelled },
+      });
+
+      await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.InStock, tx);
+
+      if (refundable > 0) {
+        await this.cashService.recordMovement(
+          cashRegisterId!,
+          {
+            type: CashMovementType.CashOut,
+            amount: refundable,
+            sourceType: 'Contract',
+            contractId,
+            detail: `DEVOLUCION PLAN SEPARE CONTRATO # ${contract.contractNumber}`,
+          },
+          currentUser,
+          tx,
+        );
+      }
+
+      return result;
     });
-
-    await this.inventoryService.transitionStatus(contract.itemId, ItemStatus.InStock);
 
     await this.eventEmitter.emitAsync(
       DomainEventNames.LayawayCancelled,
@@ -1081,6 +1154,11 @@ export class ContractsService {
     // forma de que el remate sea atómico de punta a punta.
     await this.prisma.$transaction(async (tx) => {
       for (const contract of contracts) {
+        // Capital VIGENTE (principalAmount - paidAmount), no el original —
+        // mismo criterio que onContractSettled desde Fase 6/8. Si hubo
+        // abonos previos a capital (payPrincipal), rematar por el original
+        // sobrestima el costo del inventario y descuadra 1100.
+        const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
         await tx.contract.update({
           where: { id: contract.id },
           data: { status: ContractStatus.Forfeited },
@@ -1089,7 +1167,7 @@ export class ContractsService {
           where: { id: contract.itemId },
           data: {
             status: ItemStatus.InStock,
-            costBasis: { increment: Number(contract.principalAmount) },
+            costBasis: { increment: outstandingPrincipal },
           },
         });
       }
@@ -1097,9 +1175,10 @@ export class ContractsService {
 
     // Fase 3 — eventos, ya con todo confirmado en base.
     for (const contract of contracts) {
+      const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
       await this.eventEmitter.emitAsync(
         DomainEventNames.ContractDefaulted,
-        new ContractDefaultedEvent(contract.id, contract.itemId, Number(contract.principalAmount)),
+        new ContractDefaultedEvent(contract.id, contract.itemId, outstandingPrincipal),
       );
     }
 

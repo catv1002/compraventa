@@ -41,6 +41,7 @@ export class ContractsController {
 
   /** Comprobante combinado del ticket de venta multi-artículo. */
   @Get('sale-tickets/:saleTicketId/receipt')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   getSaleTicketReceipt(@Param('saleTicketId') saleTicketId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.contractsService.getSaleTicketReceiptData(saleTicketId, user);
   }
@@ -63,6 +64,7 @@ export class ContractsController {
    * `ContractsService.getReceiptData`).
    */
   @Get(':id/receipt')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   getReceipt(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.contractsService.getReceiptData(id, user);
   }
@@ -99,6 +101,7 @@ export class ContractsController {
    * hace frente al cliente antes de cobrar nada.
    */
   @Get(':id/quote')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   quote(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -189,7 +192,8 @@ export class ContractsController {
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
     @Body('penaltyAmount') penaltyAmount?: number,
+    @Body('cashRegisterId') cashRegisterId?: string,
   ) {
-    return this.contractsService.cancelLayaway(id, penaltyAmount ?? 0, user);
+    return this.contractsService.cancelLayaway(id, penaltyAmount ?? 0, user, cashRegisterId);
   }
 }

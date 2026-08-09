@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ItemStatus } from '@prisma/client';
+import { ItemStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -325,8 +325,9 @@ export class InventoryService {
 
   // Usado internamente por Appraisals/Contracts para mover el artículo en su
   // máquina de estados — ver docs/02-ciclos-de-vida.md.
-  async transitionStatus(id: string, status: ItemStatus) {
-    return this.prisma.item.update({ where: { id }, data: { status } });
+  async transitionStatus(id: string, status: ItemStatus, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
+    return db.item.update({ where: { id }, data: { status } });
   }
 
   // Usado por Branches/Transfers al completar un traslado.

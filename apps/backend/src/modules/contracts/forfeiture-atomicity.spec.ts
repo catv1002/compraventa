@@ -33,6 +33,7 @@ function buildContract(id: string, contractNumber: number, status: ContractStatu
     status,
     itemId: `item-${contractNumber}`,
     principalAmount: 500_000,
+    paidAmount: 0,
   };
 }
 
@@ -92,6 +93,24 @@ describe('forfeitContracts — todo o nada', () => {
       }),
     );
     expect(eventEmitter.emitAsync).toHaveBeenCalledTimes(3);
+  });
+
+  it('usa el capital VIGENTE (principalAmount - paidAmount), no el original, al rematar (Fase 13)', async () => {
+    // Mismo bug que se corrigió en onContractSettled (Fase 6/8): rematar por
+    // el capital original sobrestima costBasis/1200 y el evento contable
+    // cuando hubo abonos previos a capital.
+    const contracts = [
+      { ...buildContract('c-1', 9001, ContractStatus.Overdue), paidAmount: 200_000 },
+    ];
+    const { service, tx, eventEmitter } = buildHarness(contracts);
+
+    await service.forfeitContracts(['c-1'], currentUser);
+
+    expect(tx.item.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: ItemStatus.InStock, costBasis: { increment: 300_000 } } }),
+    );
+    const event = eventEmitter.emitAsync.mock.calls[0][1] as { outstandingPrincipal: number };
+    expect(event.outstandingPrincipal).toBe(300_000);
   });
 
   it('no remata NINGUNO si un contrato de la tanda está en estado no rematable', async () => {

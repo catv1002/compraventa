@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
+import { Modal } from '../components/Modal';
 
 interface Customer {
   id: string;
@@ -82,11 +83,15 @@ export function LayawayPage() {
     },
   });
 
+  const [pendingCancel, setPendingCancel] = useState<Contract | null>(null);
   const cancelLayaway = useMutation({
-    mutationFn: (contractId: string) => api.post(`/contracts/${contractId}/cancel-layaway`, { penaltyAmount: 0 }),
+    mutationFn: (contractId: string) =>
+      api.post(`/contracts/${contractId}/cancel-layaway`, { penaltyAmount: 0, cashRegisterId: register?.id }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
       queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['cash-current'] });
+      setPendingCancel(null);
     },
   });
 
@@ -145,13 +150,14 @@ export function LayawayPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setInstallmentContractId(c.id)}
-                      className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                     >
                       Abonar
                     </button>
                     <button
-                      onClick={() => cancelLayaway.mutate(c.id)}
-                      className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
+                      onClick={() => setPendingCancel(c)}
+                      disabled={!register}
+                      className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                     >
                       Cancelar
                     </button>
@@ -182,6 +188,34 @@ export function LayawayPage() {
           );
         })}
       </div>
+
+      {pendingCancel && (
+        <Modal title="Confirmar cancelación" onClose={() => setPendingCancel(null)}>
+          <p className="mb-4 text-sm text-slate-600">
+            ¿Cancelar el apartado de {pendingCancel.customer.fullName}? Se le debe devolver{' '}
+            <span className="font-semibold">{formatCOP(pendingCancel.paidAmount)}</span> en efectivo y el artículo
+            vuelve a disponible. No se puede deshacer.
+          </p>
+          {cancelLayaway.isError && (
+            <p className="mb-2 text-sm text-red-600">{(cancelLayaway.error as ApiError).message}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setPendingCancel(null)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Volver
+            </button>
+            <button
+              onClick={() => cancelLayaway.mutate(pendingCancel.id)}
+              disabled={cancelLayaway.isPending}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {cancelLayaway.isPending ? 'Cancelando…' : 'Confirmar y devolver'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

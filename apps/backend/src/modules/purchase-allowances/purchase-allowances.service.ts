@@ -92,9 +92,10 @@ export class PurchaseAllowancesService {
   // leyó antes), así que dos desembolsos concurrentes del mismo vendedor no
   // pueden sumar más que el cupo — el segundo que llega ve el spentAmount ya
   // incrementado por el primero y falla el WHERE.
-  async consume(userId: string, amount: number, currentUser: AuthenticatedUser) {
+  async consume(userId: string, amount: number, currentUser: AuthenticatedUser, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
     const today = dateOnly(new Date());
-    const updated = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    const updated = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
       UPDATE purchase_allowances
       SET "spentAmount" = "spentAmount" + ${amount}, "updatedAt" = now()
       WHERE "userId" = ${userId}
@@ -108,7 +109,7 @@ export class PurchaseAllowancesService {
       return;
     }
 
-    const allowance = await this.prisma.purchaseAllowance.findFirst({
+    const allowance = await db.purchaseAllowance.findFirst({
       where: { userId, date: today, tenantId: currentUser.tenantId },
     });
     if (!allowance) {
