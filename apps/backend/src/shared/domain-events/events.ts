@@ -85,6 +85,10 @@ export class InterestPaymentRecordedEvent {
   constructor(public readonly contractId: string, public readonly amount: number) {}
 }
 
+export class PrincipalPaymentRecordedEvent {
+  constructor(public readonly contractId: string, public readonly amount: number) {}
+}
+
 export class DirectPurchaseRegisteredEvent {
   constructor(public readonly contractId: string, public readonly itemId: string, public readonly amount: number) {}
 }
@@ -117,6 +121,7 @@ export const DomainEventNames = {
   LayawayCancelled: 'layaway.cancelled',
   RepairCompleted: 'repair.completed',
   InterestPaymentRecorded: 'contract.interest-payment-recorded',
+  PrincipalPaymentRecorded: 'contract.principal-payment-recorded',
   DirectPurchaseRegistered: 'contract.direct-purchase-registered',
   InvoiceIssued: 'invoice.issued',
   ContractWithdrawn: 'contract.withdrawn',

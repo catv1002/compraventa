@@ -29,11 +29,13 @@ export class CustomersController {
   }
 
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.customersService.findAll(user);
   }
 
   @Get(':id')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.customersService.findOne(id, user);
   }

@@ -24,6 +24,7 @@ export class CashController {
   }
 
   @Get('current')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findCurrentOpen(@CurrentUser() user: AuthenticatedUser) {
     return this.cashService.findOpenForBranch(user.homeBranchId);
   }

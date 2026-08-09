@@ -46,11 +46,13 @@ export class ContractsController {
   }
 
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser, @Query('status') status?: ContractStatus) {
     return this.contractsService.findAll(user, status);
   }
 
   @Get(':id')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.contractsService.findOne(id, user);
   }

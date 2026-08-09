@@ -11,6 +11,7 @@ import {
   DomainEventNames,
   InterestPaymentRecordedEvent,
   ItemSoldEvent,
+  PrincipalPaymentRecordedEvent,
   RepairCompletedEvent,
   SaleReturnedEvent,
 } from '../../shared/domain-events/events';
@@ -137,13 +138,33 @@ export class AccountingEventsListener {
     // Catch-up: causa el interés pendiente hasta hoy antes de liquidar.
     await this.accrueInterest(contract.id);
 
-    const principal = Number(contract.principalAmount);
-    const interestPortion = event.settlementAmount - principal;
+    // El capital que sale de `1100` es el CAPITAL VIGENTE al momento de
+    // liquidar (principalAmount - paidAmount), no el capital original del
+    // contrato: si hubo abonos previos (`payPrincipal`), ya salieron de 1100
+    // en su propio asiento. Usar principalAmount a secas aquí duplicaba la
+    // salida de esos abonos y dejaba `interestPortion` negativo.
+    const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
+    const interestPortion = event.settlementAmount - outstandingPrincipal;
 
     await this.accountingService.postEntry(contract.tenantId, DomainEventNames.ContractSettled, [
       { accountCode: '1000', debit: event.settlementAmount, branchId: contract.branchId },
-      { accountCode: '1100', credit: principal, branchId: contract.branchId },
+      { accountCode: '1100', credit: outstandingPrincipal, branchId: contract.branchId },
       { accountCode: '1150', credit: interestPortion, branchId: contract.branchId },
+    ]);
+  }
+
+  // Un abono a capital mueve dinero real a caja y reduce la cartera de
+  // préstamos (1100) de inmediato — antes este movimiento entraba a
+  // `CashMovement` pero nunca al libro contable, dejando 1000 subestimada y
+  // 1100 sobrestimada hasta la liquidación.
+  @OnEvent(DomainEventNames.PrincipalPaymentRecorded)
+  async onPrincipalPaymentRecorded(event: PrincipalPaymentRecordedEvent) {
+    const contract = await this.prisma.contract.findUnique({ where: { id: event.contractId } });
+    if (!contract) return;
+
+    await this.accountingService.postEntry(contract.tenantId, DomainEventNames.PrincipalPaymentRecorded, [
+      { accountCode: '1000', debit: event.amount, branchId: contract.branchId },
+      { accountCode: '1100', credit: event.amount, branchId: contract.branchId },
     ]);
   }
 

@@ -44,7 +44,7 @@ export class CollectionsController {
 
   @Get(':contractId/contact')
   @Roles(UserRole.BranchManager, UserRole.Admin)
-  contactHistory(@Param('contractId') contractId: string) {
-    return this.collectionsService.contactHistory(contractId);
+  contactHistory(@Param('contractId') contractId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.collectionsService.contactHistory(contractId, user);
   }
 }

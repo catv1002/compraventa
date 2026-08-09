@@ -44,9 +44,9 @@ export class CollectionsService {
     });
   }
 
-  contactHistory(contractId: string) {
+  contactHistory(contractId: string, currentUser: AuthenticatedUser) {
     return this.prisma.collectionContactAttempt.findMany({
-      where: { contractId },
+      where: { contractId, contract: { tenantId: currentUser.tenantId } },
       include: { createdBy: true },
       orderBy: { createdAt: 'desc' },
     });

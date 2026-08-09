@@ -22,6 +22,7 @@ export class WorkshopController {
   }
 
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.workshopService.findAll(user);
   }

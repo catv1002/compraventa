@@ -49,6 +49,7 @@ import {
   DisbursementIssuedEvent,
   DomainEventNames,
   InterestPaymentRecordedEvent,
+  PrincipalPaymentRecordedEvent,
   ItemSoldEvent,
   LayawayCancelledEvent,
   LayawayCompletedEvent,
@@ -687,6 +688,11 @@ export class ContractsService {
       where: { id: contractId },
       data: { paidAmount: Number(contract.paidAmount) + dto.amount },
     });
+
+    await this.eventEmitter.emitAsync(
+      DomainEventNames.PrincipalPaymentRecorded,
+      new PrincipalPaymentRecordedEvent(contractId, dto.amount),
+    );
 
     return { contract: updated, quote: await this.getQuote(contractId, currentUser) };
   }
