@@ -27,6 +27,9 @@ const DEFAULT_CONFIGURATION = {
   interestAccrualPolicy: InterestAccrualPolicy.FullMonthCeil,
   interestRounding: InterestRounding.NearestHundred,
   contractNumberOffset: 0,
+  withholdingTaxEnabled: false,
+  withholdingTaxRate: 0,
+  withholdingTaxMinBase: 0,
 };
 
 @Injectable()

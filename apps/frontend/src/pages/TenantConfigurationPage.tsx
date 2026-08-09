@@ -25,6 +25,9 @@ interface TenantConfiguration {
   interestAccrualPolicy: 'FullMonthCeil' | 'FullMonth' | 'ProRata';
   interestRounding: 'None' | 'NearestPeso' | 'NearestHundred';
   contractNumberOffset: number;
+  withholdingTaxEnabled: boolean;
+  withholdingTaxRate: number | string;
+  withholdingTaxMinBase: number | string;
 }
 
 const MODULE_LABELS: Record<keyof ActiveModules, string> = {
@@ -112,6 +115,9 @@ export function TenantConfigurationPage() {
       interestAccrualPolicy: form.interestAccrualPolicy,
       interestRounding: form.interestRounding,
       contractNumberOffset: Number(form.contractNumberOffset),
+      withholdingTaxEnabled: form.withholdingTaxEnabled,
+      withholdingTaxRate: Number(form.withholdingTaxRate),
+      withholdingTaxMinBase: Number(form.withholdingTaxMinBase),
     });
   }
 
@@ -258,6 +264,45 @@ export function TenantConfigurationPage() {
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
+            </label>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h3 className="mb-1 text-sm font-semibold text-slate-800">Retención en la fuente</h3>
+          <p className="mb-3 text-xs text-slate-500">
+            Solo configuración — todavía no se aplica automáticamente a ninguna compra. La tarifa y el piso de UVT
+            cambian cada año; confírmalos con tu contador antes de activarla.
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.withholdingTaxEnabled}
+                onChange={(e) => setForm({ ...form, withholdingTaxEnabled: e.target.checked })}
+              />
+              Aplica retención en compras
+            </label>
+            <label className="text-sm text-slate-700">
+              Tarifa (%)
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={decimalToPercentInput(form.withholdingTaxRate)}
+                onChange={(e) => setForm({ ...form, withholdingTaxRate: percentInputToDecimal(e.target.value) })}
+              />
+            </label>
+            <label className="text-sm text-slate-700">
+              Monto mínimo de la compra (pesos)
+              <input
+                type="number"
+                min="0"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={form.withholdingTaxMinBase}
+                onChange={(e) => setForm({ ...form, withholdingTaxMinBase: e.target.value })}
+              />
             </label>
           </div>
         </section>

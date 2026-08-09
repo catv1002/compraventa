@@ -91,4 +91,18 @@ export class UpdateTenantConfigurationDto {
   @IsInt()
   @Min(0)
   contractNumberOffset?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  withholdingTaxEnabled?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  withholdingTaxRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  withholdingTaxMinBase?: number;
 }

@@ -5,6 +5,7 @@ import { formatCOP } from '../lib/format';
 import { Modal } from '../components/Modal';
 import { BarcodeScanButton } from '../components/BarcodeScanButton';
 import { useAuth } from '../lib/auth-context';
+import { WeightUnit, WEIGHT_UNIT_LABELS, toGrams } from '../lib/weight';
 
 /**
  * Definición de un atributo dinámico, tal como la publica
@@ -186,6 +187,7 @@ export function InventoryPage() {
   const [description, setDescription] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [weightGrams, setWeightGrams] = useState('');
+  const [weightUnit, setWeightUnit] = useState<WeightUnit>('g');
   const [karats, setKarats] = useState(KARATS_DEFAULT);
 
   function closeModal() {
@@ -219,7 +221,10 @@ export function InventoryPage() {
       // Solo se envían los atributos que la clase declara: el backend rechaza
       // cualquiera que no esté en el esquema.
       const attributes: { key: string; value: string }[] = [];
-      if (weightDefinition) attributes.push({ key: 'weightGrams', value: weightGrams });
+      if (weightDefinition) {
+        const grams = weightGrams ? toGrams(Number(weightGrams), weightUnit) : NaN;
+        attributes.push({ key: 'weightGrams', value: Number.isFinite(grams) ? String(grams) : weightGrams });
+      }
       if (karatsDefinition) attributes.push({ key: 'karats', value: karatValue });
 
       return api.post('/items', {
@@ -237,6 +242,7 @@ export function InventoryPage() {
       setDescription('');
       setSerialNumber('');
       setWeightGrams('');
+      setWeightUnit('g');
       setKarats(KARATS_DEFAULT);
       closeModal();
     },
@@ -250,6 +256,7 @@ export function InventoryPage() {
   const [editDescription, setEditDescription] = useState('');
   const [editSerialNumber, setEditSerialNumber] = useState('');
   const [editWeightGrams, setEditWeightGrams] = useState('');
+  const [editWeightUnit, setEditWeightUnit] = useState<WeightUnit>('g');
   const [editKarats, setEditKarats] = useState(KARATS_DEFAULT);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -264,6 +271,7 @@ export function InventoryPage() {
     setEditDescription(item.description ?? '');
     setEditSerialNumber(item.serialNumber ?? '');
     setEditWeightGrams(item.attributes?.find((a) => a.key === 'weightGrams')?.value ?? '');
+    setEditWeightUnit('g');
     setEditKarats(item.attributes?.find((a) => a.key === 'karats')?.value ?? KARATS_DEFAULT);
     setEditError(null);
   }
@@ -271,7 +279,10 @@ export function InventoryPage() {
   const updateItem = useMutation({
     mutationFn: () => {
       const attributes: { key: string; value: string }[] = [];
-      if (editWeightDefinition) attributes.push({ key: 'weightGrams', value: editWeightGrams });
+      if (editWeightDefinition) {
+        const grams = editWeightGrams ? toGrams(Number(editWeightGrams), editWeightUnit) : NaN;
+        attributes.push({ key: 'weightGrams', value: Number.isFinite(grams) ? String(grams) : editWeightGrams });
+      }
       if (editKaratsDefinition) attributes.push({ key: 'karats', value: editKarats });
 
       return api.patch(`/items/${editingItemId}`, {
@@ -510,17 +521,36 @@ export function InventoryPage() {
                   {weightDefinition?.label ?? 'Peso en gramos'}
                   {weightRequired ? ' *' : ''}
                 </label>
-                <input
-                  id="peso-gramos"
-                  value={weightGrams}
-                  onChange={(e) => setWeightGrams(e.target.value)}
-                  type="number"
-                  step="0.01"
-                  min={weightMin}
-                  placeholder="0,00"
-                  className={inputClass}
-                  required={weightRequired}
-                />
+                <div className="flex gap-1">
+                  <input
+                    id="peso-gramos"
+                    value={weightGrams}
+                    onChange={(e) => setWeightGrams(e.target.value)}
+                    type="number"
+                    step="0.01"
+                    min={weightUnit === 'g' ? weightMin : undefined}
+                    placeholder="0,00"
+                    className={inputClass}
+                    required={weightRequired}
+                  />
+                  <select
+                    value={weightUnit}
+                    onChange={(e) => setWeightUnit(e.target.value as WeightUnit)}
+                    aria-label="Unidad de peso"
+                    className="rounded-md border border-slate-300 px-1 text-sm"
+                  >
+                    {(Object.keys(WEIGHT_UNIT_LABELS) as WeightUnit[]).map((u) => (
+                      <option key={u} value={u}>
+                        {WEIGHT_UNIT_LABELS[u]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {weightUnit !== 'g' && weightGrams && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    = {toGrams(Number(weightGrams), weightUnit).toLocaleString('es-CO', { maximumFractionDigits: 2 })} g
+                  </p>
+                )}
               </div>
 
               <div>
@@ -606,19 +636,38 @@ export function InventoryPage() {
             {editWeightDefinition && (
               <div>
                 <label className={labelClass} htmlFor="edit-peso">
-                  Peso en gramos
+                  Peso
                 </label>
-                <input
-                  id="edit-peso"
-                  value={editWeightGrams}
-                  onChange={(e) => setEditWeightGrams(e.target.value)}
-                  type="number"
-                  step="0.01"
-                  min={editWeightDefinition.min ?? 0.01}
-                  className={inputClass}
-                  autoFocus
-                  required={editWeightDefinition.required}
-                />
+                <div className="flex gap-1">
+                  <input
+                    id="edit-peso"
+                    value={editWeightGrams}
+                    onChange={(e) => setEditWeightGrams(e.target.value)}
+                    type="number"
+                    step="0.01"
+                    min={editWeightUnit === 'g' ? (editWeightDefinition.min ?? 0.01) : undefined}
+                    className={inputClass}
+                    autoFocus
+                    required={editWeightDefinition.required}
+                  />
+                  <select
+                    value={editWeightUnit}
+                    onChange={(e) => setEditWeightUnit(e.target.value as WeightUnit)}
+                    aria-label="Unidad de peso"
+                    className="rounded-md border border-slate-300 px-1 text-sm"
+                  >
+                    {(Object.keys(WEIGHT_UNIT_LABELS) as WeightUnit[]).map((u) => (
+                      <option key={u} value={u}>
+                        {WEIGHT_UNIT_LABELS[u]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {editWeightUnit !== 'g' && editWeightGrams && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    = {toGrams(Number(editWeightGrams), editWeightUnit).toLocaleString('es-CO', { maximumFractionDigits: 2 })} g
+                  </p>
+                )}
               </div>
             )}
             {editKaratsDefinition && (

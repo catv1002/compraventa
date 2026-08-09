@@ -782,5 +782,23 @@ model TenantConfiguration {
   // del sistema legado en vez de arrancar en 1 (RN-08, CV-008/CV-024).
   contractNumberOffset       Int     @default(0)
 
+  // ---- Retención en la fuente (hallazgo de auditoría contable) ----
+  // Solo parametrización: estos campos NO se usan todavía en ningún cálculo
+  // de contratos/caja/facturación — es a propósito. La auditoría señaló que
+  // el negocio compra a personas naturales no obligadas a facturar, lo cual
+  // frecuentemente implica retención, pero calcularla bien requiere UVT
+  // vigente y tablas de tarifa por concepto que cambian cada año — eso es
+  // trabajo aparte. Esto solo deja el terreno listo (el dato existe y es
+  // configurable) para cuando se conecte el cálculo real.
+  withholdingTaxEnabled Boolean @default(false)
+  // Tarifa como fracción, igual convención que las demás tasas de este
+  // modelo — 0.025 = 2.5%, no "2.5".
+  withholdingTaxRate    Decimal @db.Decimal(6, 4) @default(0)
+  // Monto mínimo de la operación a partir del cual aplicaría la retención
+  // (el equivalente en pesos del piso en UVT del concepto tributario que
+  // corresponda) — se guarda en pesos, no en UVT, para no depender de que
+  // este sistema sepa el valor de la UVT vigente.
+  withholdingTaxMinBase Decimal @db.Decimal(14, 2) @default(0)
+
   @@map("tenant_configurations")
 }
