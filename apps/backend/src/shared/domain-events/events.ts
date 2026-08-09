@@ -90,6 +90,10 @@ export class PrincipalPaymentRecordedEvent {
   constructor(public readonly contractId: string, public readonly amount: number) {}
 }
 
+export class ContractRenewedEvent {
+  constructor(public readonly contractId: string) {}
+}
+
 export class DirectPurchaseRegisteredEvent {
   constructor(public readonly contractId: string, public readonly itemId: string, public readonly amount: number) {}
 }
@@ -123,6 +127,7 @@ export const DomainEventNames = {
   RepairCompleted: 'repair.completed',
   InterestPaymentRecorded: 'contract.interest-payment-recorded',
   PrincipalPaymentRecorded: 'contract.principal-payment-recorded',
+  ContractRenewed: 'contract.renewed',
   DirectPurchaseRegistered: 'contract.direct-purchase-registered',
   InvoiceIssued: 'invoice.issued',
   ContractWithdrawn: 'contract.withdrawn',

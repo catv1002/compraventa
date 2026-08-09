@@ -50,6 +50,7 @@ import {
   DomainEventNames,
   InterestPaymentRecordedEvent,
   PrincipalPaymentRecordedEvent,
+  ContractRenewedEvent,
   ItemSoldEvent,
   LayawayCancelledEvent,
   LayawayCompletedEvent,
@@ -610,20 +611,38 @@ export class ContractsService {
 
     const { months, amount } = quotePartialPayment(input, dto.months);
 
-    await this.prisma.contractMovement.create({
-      data: { contractId, type: ContractMovementType.InterestPayment, amount },
+    // Movimiento de contrato + movimiento de caja se confirman juntos
+    // (Fase 9): antes eran dos escrituras sueltas — si la segunda fallaba,
+    // el `ContractMovement` quedaba creado sin que el dinero realmente
+    // hubiera entrado a caja (o viceversa si se reordenaban).
+    //
+    // El `interestPaidThrough` se actualiza DESPUÉS, fuera de esta
+    // transacción, a propósito: `accrueInterest` (disparado por el evento de
+    // abajo) lee `contract.interestPaidThrough` de la BD para calcular
+    // `chargingFrom` en su cotización de catch-up — si ya estuviera avanzado
+    // al nuevo valor, el cálculo de "cuánto ya se causó" quedaría sobre la
+    // frontera NUEVA en vez de la vieja, dando un monto distinto al
+    // correcto. Ver `interest-calculator.ts#quoteInterest` (`chargingFrom =
+    // paidThrough ?? accrualStart`). Mismo orden que antes de Fase 9, ahora
+    // documentado explícitamente para que nadie lo reordene "por prolijo".
+    await this.prisma.$transaction(async (tx) => {
+      await tx.contractMovement.create({
+        data: { contractId, type: ContractMovementType.InterestPayment, amount },
+      });
+      await this.cashService.recordMovement(
+        dto.cashRegisterId,
+        {
+          type: CashMovementType.CashIn,
+          amount,
+          sourceType: 'Contract',
+          contractId,
+          paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+        },
+        currentUser,
+        tx,
+      );
     });
-    await this.cashService.recordMovement(
-      dto.cashRegisterId,
-      {
-        type: CashMovementType.CashIn,
-        amount,
-        sourceType: 'Contract',
-        contractId,
-        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
-      },
-      currentUser,
-    );
+
     await this.eventEmitter.emitAsync(
       DomainEventNames.InterestPaymentRecorded,
       new InterestPaymentRecordedEvent(contractId, amount),
@@ -669,24 +688,30 @@ export class ContractsService {
       );
     }
 
-    await this.prisma.contractMovement.create({
-      data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
-    });
-    await this.cashService.recordMovement(
-      dto.cashRegisterId,
-      {
-        type: CashMovementType.CashIn,
-        amount: dto.amount,
-        sourceType: 'Contract',
-        contractId,
-        paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
-      },
-      currentUser,
-    );
-
-    const updated = await this.prisma.contract.update({
-      where: { id: contractId },
-      data: { paidAmount: Number(contract.paidAmount) + dto.amount },
+    // A diferencia de payInterest, aquí no hay ninguna lectura posterior que
+    // dependa de leer un valor "viejo" — `paidAmount` puede avanzar dentro de
+    // la misma transacción que el movimiento de contrato y de caja sin
+    // ningún riesgo de orden.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.contractMovement.create({
+        data: { contractId, type: ContractMovementType.PrincipalPayment, amount: dto.amount },
+      });
+      await this.cashService.recordMovement(
+        dto.cashRegisterId,
+        {
+          type: CashMovementType.CashIn,
+          amount: dto.amount,
+          sourceType: 'Contract',
+          contractId,
+          paymentMethod: dto.paymentMethod ?? PaymentMethod.Cash,
+        },
+        currentUser,
+        tx,
+      );
+      return tx.contract.update({
+        where: { id: contractId },
+        data: { paidAmount: Number(contract.paidAmount) + dto.amount },
+      });
     });
 
     await this.eventEmitter.emitAsync(
@@ -721,7 +746,7 @@ export class ContractsService {
       data: { contractId, type: ContractMovementType.Renewal, amount: 0 },
     });
 
-    return this.prisma.contract.update({
+    const updated = await this.prisma.contract.update({
       where: { id: contractId },
       data: {
         status: ContractStatus.Renewed,
@@ -729,6 +754,13 @@ export class ContractsService {
         renewalCount: contract.renewalCount + 1,
       },
     });
+
+    // Renovar exige estar al día (`quote.isCurrent` arriba) y saca al
+    // contrato de Overdue/Forfeited — si traía provisión de cartera
+    // acumulada de cuando estuvo en mora, ya no aplica.
+    await this.eventEmitter.emitAsync(DomainEventNames.ContractRenewed, new ContractRenewedEvent(contractId));
+
+    return updated;
   }
 
   /**

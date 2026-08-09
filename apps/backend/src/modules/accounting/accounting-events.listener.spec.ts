@@ -22,12 +22,17 @@ import {
 } from '../../shared/domain-events/events';
 
 function buildHarness() {
-  const prisma = {
+  const prisma: any = {
     contract: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
     tenantConfiguration: { findUnique: jest.fn().mockResolvedValue(null) },
     item: { findUnique: jest.fn() },
     cashRegister: { findUnique: jest.fn() },
   };
+  // Fase 9: accrueInterest/provisionOverdueDebt postean dentro de
+  // `$transaction`. El mock ejecuta el callback pasándole el mismo `prisma`
+  // como `tx` — equivalente a "la transacción siempre confirma" para el
+  // propósito de esta prueba (qué se postea, no la atomicidad en sí).
+  prisma.$transaction = jest.fn((callback: (tx: any) => Promise<unknown>) => callback(prisma));
   const accountingService = { postEntry: jest.fn().mockResolvedValue({}) };
   const listener = new AccountingEventsListener(prisma as any, accountingService as any);
   return { listener, prisma, accountingService };
@@ -69,10 +74,15 @@ describe('AccountingEventsListener', () => {
       // Un mes ya causado (40.000) vs dos meses a hoy (80.000): la diferencia
       // es el segundo mes, no el acumulado completo.
       expect(amount).toBe(40_000);
-      expect(accountingService.postEntry).toHaveBeenCalledWith('t-1', 'InterestAccrued', [
-        { accountCode: '1150', debit: 40_000, branchId: 'b-1' },
-        { accountCode: '4100', credit: 40_000, branchId: 'b-1' },
-      ]);
+      expect(accountingService.postEntry).toHaveBeenCalledWith(
+        't-1',
+        'InterestAccrued',
+        [
+          { accountCode: '1150', debit: 40_000, branchId: 'b-1' },
+          { accountCode: '4100', credit: 40_000, branchId: 'b-1' },
+        ],
+        prisma, // tx: dentro de $transaction el mock pasa el mismo `prisma` como tx
+      );
       expect(prisma.contract.update).toHaveBeenCalledWith({
         where: { id: 'c-1' },
         data: { interestAccruedThrough: asOf },
@@ -247,10 +257,15 @@ describe('AccountingEventsListener', () => {
         expect(accountingService.postEntry).not.toHaveBeenCalled();
       } else {
         expect(amount).toBe(expectedAmount);
-        expect(accountingService.postEntry).toHaveBeenCalledWith('t-1', 'CarteraProvisioned', [
-          { accountCode: '5200', debit: expectedAmount, branchId: 'b-1' },
-          { accountCode: '1105', credit: expectedAmount, branchId: 'b-1' },
-        ]);
+        expect(accountingService.postEntry).toHaveBeenCalledWith(
+          't-1',
+          'CarteraProvisioned',
+          [
+            { accountCode: '5200', debit: expectedAmount, branchId: 'b-1' },
+            { accountCode: '1105', credit: expectedAmount, branchId: 'b-1' },
+          ],
+          prisma,
+        );
       }
     });
 
@@ -270,6 +285,7 @@ describe('AccountingEventsListener', () => {
           { accountCode: '5200', debit: 200_000, branchId: 'b-1' },
           { accountCode: '1105', credit: 200_000, branchId: 'b-1' },
         ],
+        prisma,
       );
       expect(prisma.contract.update).toHaveBeenCalledWith({
         where: { id: 'c-1' },

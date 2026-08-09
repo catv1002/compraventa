@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 
@@ -14,7 +15,21 @@ export interface JournalLineInput {
 export class AccountingService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async postEntry(tenantId: string, sourceEvent: string, lines: JournalLineInput[]) {
+  // `tx` permite postear dentro de una transacción de negocio ya abierta —
+  // mismo patrón que `CashService.recordMovement`. Necesario para que el
+  // asiento y el `contract.update` que avanza el marcador de causación
+  // (`interestAccruedThrough`/`provisionedAmount`) se confirmen o reviertan
+  // juntos: sin esto, un crash entre ambas escrituras deja el asiento
+  // posteado pero el marcador sin avanzar, y la próxima corrida del cron
+  // vuelve a causar/provisionar el mismo período, duplicando el asiento.
+  async postEntry(
+    tenantId: string,
+    sourceEvent: string,
+    lines: JournalLineInput[],
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? this.prisma;
+
     const totalDebit = lines.reduce((sum, l) => sum + (l.debit ?? 0), 0);
     const totalCredit = lines.reduce((sum, l) => sum + (l.credit ?? 0), 0);
 
@@ -24,7 +39,7 @@ export class AccountingService {
       );
     }
 
-    const accounts = await this.prisma.account.findMany({
+    const accounts = await db.account.findMany({
       where: { tenantId, code: { in: lines.map((l) => l.accountCode) } },
     });
     const accountByCode = new Map(accounts.map((a) => [a.code, a]));
@@ -44,7 +59,7 @@ export class AccountingService {
       );
     }
 
-    return this.prisma.journalEntry.create({
+    return db.journalEntry.create({
       data: {
         tenantId,
         sourceEvent,

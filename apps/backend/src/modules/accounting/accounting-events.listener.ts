@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { ContractStatus, ContractType } from '@prisma/client';
+import { ContractStatus, ContractType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountingService } from './accounting.service';
 import { InterestPolicy, quoteInterest } from '../contracts/interest/interest-calculator';
 import {
   CashMovementRecordedEvent,
   ContractDefaultedEvent,
+  ContractRenewedEvent,
   ContractSettledEvent,
   DisbursementIssuedEvent,
   DomainEventNames,
@@ -102,14 +103,26 @@ export class AccountingEventsListener {
     const amount = nowQuote.totalOwed - alreadyQuote.totalOwed;
     if (amount <= 0) return null;
 
-    await this.accountingService.postEntry(contract.tenantId, 'InterestAccrued', [
-      { accountCode: '1150', debit: amount, branchId: contract.branchId },
-      { accountCode: '4100', credit: amount, branchId: contract.branchId },
-    ]);
+    // El asiento y el avance de `interestAccruedThrough` se confirman juntos:
+    // si el proceso muere entre los dos (el cron corre sin supervisión cada
+    // noche sobre todos los tenants), un asiento posteado sin el marcador
+    // avanzado hace que la siguiente corrida vuelva a causar el mismo
+    // período, duplicando el ingreso en 4100/1150.
+    await this.prisma.$transaction(async (tx) => {
+      await this.accountingService.postEntry(
+        contract.tenantId,
+        'InterestAccrued',
+        [
+          { accountCode: '1150', debit: amount, branchId: contract.branchId },
+          { accountCode: '4100', credit: amount, branchId: contract.branchId },
+        ],
+        tx,
+      );
 
-    await this.prisma.contract.update({
-      where: { id: contractId },
-      data: { interestAccruedThrough: asOf },
+      await tx.contract.update({
+        where: { id: contractId },
+        data: { interestAccruedThrough: asOf },
+      });
     });
 
     return amount;
@@ -152,6 +165,12 @@ export class AccountingEventsListener {
       { accountCode: '1100', credit: outstandingPrincipal, branchId: contract.branchId },
       { accountCode: '1150', credit: interestPortion, branchId: contract.branchId },
     ]);
+
+    // El contrato ya no puede volver a estar en mora bajo este número — si
+    // traía provisión de cartera acumulada (estuvo Overdue/Forfeited antes de
+    // liquidarse), se reversa completa. Sin esto, 1105/5200 quedaban con
+    // saldo huérfano indefinido para deuda que ya se cobró.
+    await this.reverseProvisionIfOutOfDefault(contract.id);
   }
 
   // Un abono a capital mueve dinero real a caja y reduce la cartera de
@@ -167,6 +186,13 @@ export class AccountingEventsListener {
       { accountCode: '1000', debit: event.amount, branchId: contract.branchId },
       { accountCode: '1100', credit: event.amount, branchId: contract.branchId },
     ]);
+  }
+
+  // Renovar exige estar al día y saca al contrato de Overdue/Forfeited — el
+  // otro camino de salida de mora además de la liquidación.
+  @OnEvent(DomainEventNames.ContractRenewed)
+  async onContractRenewed(event: ContractRenewedEvent) {
+    await this.reverseProvisionIfOutOfDefault(event.contractId);
   }
 
   @OnEvent(DomainEventNames.ContractDefaulted)
@@ -264,11 +290,13 @@ export class AccountingEventsListener {
    * el interés causado no entra porque ya vive aparte en 1150 y su propio
    * riesgo de cobro es harina de otro costal.
    *
-   * `provisionedAmount` es acumulado y monótono creciente: solo se postea la
-   * DIFERENCIA contra lo ya provisionado, nunca se reversa aquí (si el
-   * contrato se pone al día o se liquida, sale del universo Overdue/Forfeited
-   * y deja de acumular — reversar la provisión existente sería una decisión
-   * de negocio explícita, fuera de alcance de este job automático).
+   * `provisionedAmount` YA NO es monótono creciente (Fase 9): se postea la
+   * diferencia —positiva o negativa— contra lo ya provisionado, y cuando un
+   * contrato SALE de Overdue/Forfeited (se pone al día, se renueva, se
+   * liquida) `reverseProvisionIfOutOfDefault` revierte lo acumulado a cero.
+   * Antes la provisión solo subía y nunca bajaba, dejando saldos huérfanos
+   * en 1105/5200 para contratos que ya no estaban en mora — confirmado como
+   * gap real (no solo de alcance) por la auditoría contable NIIF-PYME.
    */
   private provisionRateFor(daysOverdue: number): number {
     if (daysOverdue > 180) return 0.6;
@@ -287,16 +315,76 @@ export class AccountingEventsListener {
     const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
     const requiredProvision = Math.round(outstandingPrincipal * this.provisionRateFor(daysOverdue));
     const amount = requiredProvision - Number(contract.provisionedAmount);
+    if (amount === 0) return null;
+
+    // El asiento (a favor o en contra) y el nuevo `provisionedAmount` se
+    // confirman juntos por la misma razón que en `accrueInterest`: evitar
+    // que un crash a mitad de corrida deje el asiento posteado sin que el
+    // marcador avance.
+    await this.prisma.$transaction(async (tx) => {
+      if (amount > 0) {
+        await this.accountingService.postEntry(
+          contract.tenantId,
+          'CarteraProvisioned',
+          [
+            { accountCode: '5200', debit: amount, branchId: contract.branchId },
+            { accountCode: '1105', credit: amount, branchId: contract.branchId },
+          ],
+          tx,
+        );
+      } else {
+        // El tramo de mora bajó (ej. un abono a capital redujo la base) sin
+        // que el contrato saliera de Overdue/Forfeited: se reversa solo la
+        // diferencia, mismo criterio que al subir.
+        await this.accountingService.postEntry(
+          contract.tenantId,
+          'CarteraProvisionReversed',
+          [
+            { accountCode: '1105', debit: -amount, branchId: contract.branchId },
+            { accountCode: '5200', credit: -amount, branchId: contract.branchId },
+          ],
+          tx,
+        );
+      }
+
+      await tx.contract.update({
+        where: { id: contractId },
+        data: { provisionedAmount: requiredProvision },
+      });
+    });
+
+    return amount;
+  }
+
+  /**
+   * Reversa TODA la provisión acumulada de un contrato que ya no está en
+   * Overdue/Forfeited (se liquidó, se renovó, o volvió a Active al ponerse
+   * al día). Se llama desde `onContractSettled` y desde
+   * `ContractsService.renew()` — los dos únicos caminos de salida de mora
+   * que emiten un evento propio hoy. `processOverdueContracts` (Active →
+   * Overdue) no aplica: entra a mora, no sale.
+   */
+  async reverseProvisionIfOutOfDefault(contractId: string, tx?: Prisma.TransactionClient) {
+    const db = tx ?? this.prisma;
+    const contract = await db.contract.findUnique({ where: { id: contractId } });
+    if (!contract) return null;
+
+    const amount = Number(contract.provisionedAmount);
     if (amount <= 0) return null;
 
-    await this.accountingService.postEntry(contract.tenantId, 'CarteraProvisioned', [
-      { accountCode: '5200', debit: amount, branchId: contract.branchId },
-      { accountCode: '1105', credit: amount, branchId: contract.branchId },
-    ]);
+    await this.accountingService.postEntry(
+      contract.tenantId,
+      'CarteraProvisionReversed',
+      [
+        { accountCode: '1105', debit: amount, branchId: contract.branchId },
+        { accountCode: '5200', credit: amount, branchId: contract.branchId },
+      ],
+      tx,
+    );
 
-    await this.prisma.contract.update({
+    await db.contract.update({
       where: { id: contractId },
-      data: { provisionedAmount: requiredProvision },
+      data: { provisionedAmount: 0 },
     });
 
     return amount;
