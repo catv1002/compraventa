@@ -21,7 +21,11 @@ export class BranchesController {
     return this.branchesService.create(dto, user);
   }
 
+  // Todos los roles necesitan ver la lista de sucursales (selector de sede en
+  // transferencias, encabezado con "Sede X", etc.) — a diferencia de
+  // crear/editar, que sí es exclusivo de Admin.
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.branchesService.findAll(user);
   }

@@ -30,6 +30,7 @@ export class ItemsController {
   }
 
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query('status') status?: ItemStatus,
@@ -46,11 +47,13 @@ export class ItemsController {
    * `cash-registers/statement`: Nest resuelve rutas en orden de declaración.
    */
   @Get('lookup/:code')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   lookupByCode(@Param('code') code: string, @CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.findByCode(code, user);
   }
 
   @Get(':id')
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.findOne(id, user);
   }

@@ -20,7 +20,14 @@ export class TransfersController {
     return this.transfersService.initiate(dto, user);
   }
 
+  // SalesAdvisor incluido pese a que iniciar/despachar/recibir/cancelar es
+  // BranchManager/Admin: `BranchesPage.tsx` no está restringida por rol en
+  // el nav y consulta `/transfers` para cualquier usuario que la visite —
+  // restringir la lectura solo a gerencia rompería esa pantalla para
+  // SalesAdvisor. Ver la lectura de `/items`/`/categories`/`/branches`,
+  // mismo criterio: lectura abierta a los tres roles, escritura restringida.
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.transfersService.findAll(user);
   }

@@ -18,7 +18,11 @@ export class CategoriesController {
     return this.inventoryService.createCategory(dto, user);
   }
 
+  // SalesAdvisor incluido a diferencia de `create` (Admin/BranchManager
+  // only): el selector de categoría en el formulario de alta de artículo lo
+  // usa cualquier operador de mostrador, no solo gerencia.
   @Get()
+  @Roles(UserRole.SalesAdvisor, UserRole.BranchManager, UserRole.Admin)
   findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.listCategories(user);
   }
