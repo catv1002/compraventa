@@ -153,18 +153,37 @@ describe('settle(): dos asientos de caja, no uno', () => {
   it('no asienta una fila de cero cuando no hubo sobrecosto', async () => {
     // Contrato liquidado el mismo día del desembolso: no causó sobrecosto. Una
     // fila de 0.00 en el libro es ruido para quien cuadra la caja.
-    const hoy = new Date();
-    const { service, cashService } = buildHarness(
-      buildContract({ interestAccrualStart: hoy, createdAt: hoy }),
-    );
+    //
+    // Reloj simulado, a propósito (era la causa del flake reportado en la
+    // auditoría): `settle()` llama `new Date()` internamente para `asOf`, sin
+    // recibirlo como parámetro. Con el reloj real, `hoy` (capturado aquí) y
+    // ese `new Date()` interno son dos instantes DISTINTOS, aunque sea por un
+    // solo milisegundo — y bajo la política `FullMonthCeil` (cualquier
+    // fracción de mes cuenta como mes completo, ver interest-calculator.ts
+    // #startedMonthsBetween) esa diferencia de un milisegundo basta para que
+    // el contrato "deba" un mes de interés en vez de cero. El test pasaba o
+    // fallaba según si ambas llamadas caían en el mismo tick de reloj —
+    // exactamente el flake que reportaron los auditores. `jest.useFakeTimers`
+    // congela el reloj para que ambas lecturas den el MISMO instante siempre.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    const hoy = new Date('2026-07-15T16:11:00.000Z');
+    jest.setSystemTime(hoy);
 
-    await service.settle('c-92627', {} as any, CASH_REGISTER_ID, currentUser);
+    try {
+      const { service, cashService } = buildHarness(
+        buildContract({ interestAccrualStart: hoy, createdAt: hoy }),
+      );
 
-    expect(cashService.recordMovement).toHaveBeenCalledTimes(1);
-    expect(cashService.recordMovement.mock.calls[0][1]).toMatchObject({
-      amount: CAPITAL,
-      detail: 'CAPITAL LIQUIDACION DEL CONTRATO # 92627',
-    });
+      await service.settle('c-92627', {} as any, CASH_REGISTER_ID, currentUser);
+
+      expect(cashService.recordMovement).toHaveBeenCalledTimes(1);
+      expect(cashService.recordMovement.mock.calls[0][1]).toMatchObject({
+        amount: CAPITAL,
+        detail: 'CAPITAL LIQUIDACION DEL CONTRATO # 92627',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('devuelve el total desglosado para que la pantalla no lo recomponga', async () => {
