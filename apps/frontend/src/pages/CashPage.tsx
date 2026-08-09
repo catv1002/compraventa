@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api-client';
+import { api, ApiError } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 
 interface CashMovement {
   id: string;
@@ -81,20 +82,28 @@ export function CashPage() {
             Abrir caja
           </button>
         </form>
-      ) : (
+      ) : null}
+
+      {(openRegister.isError || closeRegister.isError) && (
+        <p className="mt-2 text-sm text-red-600">
+          {((openRegister.error ?? closeRegister.error) as ApiError).message}
+        </p>
+      )}
+
+      {register && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <p className="text-sm text-slate-500">Base</p>
-              <p className="text-xl font-semibold">${Number(register.baseAmount).toLocaleString('es-CO')}</p>
+              <p className="text-xl font-semibold">{formatCOP(register.baseAmount)}</p>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <p className="text-sm text-slate-500">Ingresos</p>
-              <p className="text-xl font-semibold text-emerald-600">${totalIn.toLocaleString('es-CO')}</p>
+              <p className="text-xl font-semibold text-emerald-600">{formatCOP(totalIn)}</p>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <p className="text-sm text-slate-500">Egresos</p>
-              <p className="text-xl font-semibold text-red-600">${totalOut.toLocaleString('es-CO')}</p>
+              <p className="text-xl font-semibold text-red-600">{formatCOP(totalOut)}</p>
             </div>
           </div>
 
@@ -131,9 +140,8 @@ export function CashPage() {
                     : 'bg-amber-50 text-amber-900'
                 }`}
               >
-                Esperado: ${closeResult.expectedCash.toLocaleString('es-CO')} · Contado: $
-                {closeResult.physicalCount.toLocaleString('es-CO')} · Diferencia: $
-                {closeResult.discrepancy.toLocaleString('es-CO')}
+                Esperado: {formatCOP(closeResult.expectedCash)} · Contado: {formatCOP(closeResult.physicalCount)} ·
+                Diferencia: {formatCOP(closeResult.discrepancy)}
                 {closeResult.discrepancy !== 0 && ' — queda pendiente de resolver antes de abrir la próxima caja.'}
               </div>
             )}
@@ -153,7 +161,7 @@ export function CashPage() {
                   <tr key={m.id} className="border-t border-slate-100">
                     <td className="px-4 py-2">{m.type === 'CashIn' ? 'Ingreso' : 'Egreso'}</td>
                     <td className="px-4 py-2">{m.sourceType}</td>
-                    <td className="px-4 py-2">${Number(m.amount).toLocaleString('es-CO')}</td>
+                    <td className="px-4 py-2">{formatCOP(m.amount)}</td>
                   </tr>
                 ))}
               </tbody>

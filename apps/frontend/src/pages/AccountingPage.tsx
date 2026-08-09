@@ -79,15 +79,15 @@ export function AccountingPage() {
       <div className="mb-6 grid grid-cols-3 gap-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-sm text-slate-500">Ingresos</p>
-          <p className="text-xl font-semibold text-emerald-600">${(data?.revenue ?? 0).toLocaleString('es-CO')}</p>
+          <p className="text-xl font-semibold text-emerald-600">{formatCOP(data?.revenue ?? 0)}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-sm text-slate-500">Costos</p>
-          <p className="text-xl font-semibold text-red-600">${(data?.expense ?? 0).toLocaleString('es-CO')}</p>
+          <p className="text-xl font-semibold text-red-600">{formatCOP(data?.expense ?? 0)}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-sm text-slate-500">Utilidad neta</p>
-          <p className="text-xl font-semibold">${(data?.netIncome ?? 0).toLocaleString('es-CO')}</p>
+          <p className="text-xl font-semibold">{formatCOP(data?.netIncome ?? 0)}</p>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export function AccountingPage() {
               <tr key={r.code} className="border-t border-slate-100">
                 <td className="px-4 py-2">{r.code} — {r.name}</td>
                 <td className="px-4 py-2">{r.type}</td>
-                <td className="px-4 py-2">${r.balance.toLocaleString('es-CO')}</td>
+                <td className="px-4 py-2">{formatCOP(r.balance)}</td>
               </tr>
             ))}
           </tbody>

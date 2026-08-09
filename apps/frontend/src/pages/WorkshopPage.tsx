@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api-client';
+import { api, ApiError } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 
 interface Item {
   id: string;
@@ -96,6 +97,12 @@ export function WorkshopPage() {
         </button>
       </form>
 
+      {(createOrder.isError || addSparePart.isError || completeOrder.isError) && (
+        <p className="mb-4 text-sm text-red-600">
+          {((createOrder.error ?? addSparePart.error ?? completeOrder.error) as ApiError).message}
+        </p>
+      )}
+
       <div className="space-y-2">
         {orders?.map((order) => (
           <div key={order.id} className="rounded-lg border border-slate-200 bg-white p-4">
@@ -104,7 +111,7 @@ export function WorkshopPage() {
                 <p className="font-medium text-slate-800">{order.item.description ?? order.item.id.slice(0, 8)}</p>
                 <p className="text-xs text-slate-500">
                   {order.diagnosis} · <span className="font-medium">{STATUS_LABELS[order.status] ?? order.status}</span> ·
-                  costo total ${Number(order.totalCost).toLocaleString('es-CO')}
+                  costo total {formatCOP(order.totalCost)}
                 </p>
               </div>
               {order.status === 'Open' && (
@@ -128,7 +135,7 @@ export function WorkshopPage() {
             {order.spareParts.length > 0 && (
               <ul className="mt-2 space-y-1 text-xs text-slate-500">
                 {order.spareParts.map((p) => (
-                  <li key={p.id}>{p.description} — ${Number(p.cost).toLocaleString('es-CO')}</li>
+                  <li key={p.id}>{p.description} — {formatCOP(p.cost)}</li>
                 ))}
               </ul>
             )}

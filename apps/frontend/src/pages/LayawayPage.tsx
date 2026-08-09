@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api-client';
+import { api, ApiError } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 
 interface Customer {
   id: string;
@@ -121,7 +122,11 @@ export function LayawayPage() {
         </button>
       </form>
 
-      {createLayaway.isError && <p className="mb-4 text-sm text-red-600">{(createLayaway.error as Error).message}</p>}
+      {(createLayaway.isError || payInstallment.isError || cancelLayaway.isError) && (
+        <p className="mb-4 text-sm text-red-600">
+          {((createLayaway.error ?? payInstallment.error ?? cancelLayaway.error) as ApiError).message}
+        </p>
+      )}
 
       <div className="space-y-2">
         {contracts?.map((c) => {
@@ -132,7 +137,7 @@ export function LayawayPage() {
                 <div>
                   <p className="font-medium text-slate-800">{c.customer.fullName} · {c.item.description ?? 'Artículo'}</p>
                   <p className="text-xs text-slate-500">
-                    ${Number(c.paidAmount).toLocaleString('es-CO')} / ${Number(c.principalAmount).toLocaleString('es-CO')} ·{' '}
+                    {formatCOP(c.paidAmount)} / {formatCOP(c.principalAmount)} ·{' '}
                     <span className="font-medium">{STATUS_LABELS[c.status] ?? c.status}</span>
                   </p>
                 </div>

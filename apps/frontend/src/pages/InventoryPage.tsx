@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../lib/auth-context';
 
@@ -130,7 +131,7 @@ function MetalPricesStrip() {
           <div key={metal} className="rounded-lg border border-slate-200 bg-white p-3">
             <p className="text-xs font-medium text-slate-500">Cotización {METAL_LABELS[metal]} (por gramo puro)</p>
             <p className="text-sm font-semibold text-slate-800">
-              {row ? `$${Number(row.pricePerGramFine).toLocaleString('es-CO')}` : 'Sin cotización hoy'}
+              {row ? formatCOP(row.pricePerGramFine) : 'Sin cotización hoy'}
             </p>
             <div className="mt-2 flex items-center gap-2">
               <input
@@ -395,9 +396,10 @@ export function InventoryPage() {
                       </div>
                       {suggested?.suggestedValue != null ? (
                         <p className="text-xs text-slate-500">
-                          Sugerido: ${suggested.suggestedValue.toLocaleString('es-CO')} (
-                          {suggested.weightGrams}g × {Math.round((suggested.purity ?? 0) * 100)}% × $
-                          {Number(suggested.pricePerGramFine).toLocaleString('es-CO')}/g de {METAL_LABELS[suggested.metal as 'Gold' | 'Silver' | 'Platinum'] ?? suggested.metal})
+                          Sugerido: {formatCOP(suggested.suggestedValue)} (
+                          {suggested.weightGrams}g × {Math.round((suggested.purity ?? 0) * 100)}% ×{' '}
+                          {formatCOP(suggested.pricePerGramFine ?? 0)}/g de{' '}
+                          {METAL_LABELS[suggested.metal as 'Gold' | 'Silver' | 'Platinum'] ?? suggested.metal})
                           {' · '}
                           <button
                             type="button"

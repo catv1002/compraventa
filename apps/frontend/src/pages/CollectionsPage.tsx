@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 
 interface Customer {
   id: string;
@@ -61,7 +62,7 @@ export function CollectionsPage() {
         <div className="space-y-2">
           {upcoming?.map((c) => (
             <div key={c.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-              {c.customer.fullName} — ${Number(c.principalAmount).toLocaleString('es-CO')} — vence{' '}
+              {c.customer.fullName} — {formatCOP(c.principalAmount)} — vence{' '}
               {c.dueDate && new Date(c.dueDate).toLocaleDateString('es-CO')}
             </div>
           ))}
@@ -75,7 +76,7 @@ export function CollectionsPage() {
             <div key={c.id} className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm">
-                  {c.customer.fullName} — ${Number(c.principalAmount).toLocaleString('es-CO')}
+                  {c.customer.fullName} — {formatCOP(c.principalAmount)}
                 </span>
                 <button
                   onClick={() => setContactContractId(c.id)}

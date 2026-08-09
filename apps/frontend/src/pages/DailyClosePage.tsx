@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
 import { useAuth } from '../lib/auth-context';
@@ -130,8 +131,11 @@ export function DailyClosePage() {
       {data && (
         <>
           {data.diferenciaCajaPendiente && (
-            <div className="rounded border border-amber-400 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-              Hay una diferencia de caja sin resolver de un cierre anterior.
+            <div className="flex items-center justify-between rounded border border-amber-400 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+              <span>Hay una diferencia de caja sin resolver de un cierre anterior.</span>
+              <Link to="/caja" className="underline hover:text-amber-950">
+                Ir a Caja
+              </Link>
             </div>
           )}
 

@@ -197,10 +197,10 @@ export function ContractsPage() {
 
   return (
     <div>
-      <h2 className="mb-1 text-lg font-semibold text-slate-800">Contratos de compraventa con pacto de retroventa</h2>
+      <h2 className="mb-1 text-lg font-semibold text-slate-800">Contratos</h2>
       <p className="mb-4 text-xs text-slate-500">
-        El bien pasa a propiedad del negocio desde la firma; el cliente puede recomprarlo pagando el valor de
-        retroventa antes del vencimiento — ver docs/01-investigacion-negocio.md §1.1.
+        Empeño: el bien queda en garantía y el cliente lo recupera pagando el préstamo más intereses antes del
+        vencimiento. Legalmente es una compraventa con pacto de retroventa — ver docs/01-investigacion-negocio.md §1.1.
       </p>
 
       {!register && (
@@ -242,14 +242,14 @@ export function ContractsPage() {
         <input
           value={purchaseValue}
           onChange={(e) => setPurchaseValue(e.target.value)}
-          placeholder={contractType === 'Sale' ? 'Precio de venta' : 'Valor de compra'}
+          placeholder={contractType === 'Sale' ? 'Precio de venta' : 'Valor del préstamo'}
           type="number"
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           required
         />
         {contractType === 'Pawn' ? (
           <>
-            <input value={retroventaRate} onChange={(e) => setRetroventaRate(e.target.value)} placeholder="% Retroventa mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
+            <input value={retroventaRate} onChange={(e) => setRetroventaRate(e.target.value)} placeholder="% de interés mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
             {/* Opcional: si se deja vacío, el servidor aplica el plazo configurado
                 (6 meses por defecto, RN-02) en vez de exigir que se teclee. */}
             <input value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" title="Vencimiento (opcional)" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
+import { formatCOP } from '../lib/format';
 import { useAuth } from '../lib/auth-context';
 
 interface Allowance {
@@ -79,16 +80,16 @@ export function PurchaseAllowancesPage() {
           <div className="mt-2 grid grid-cols-3 gap-4">
             <div>
               <p className="text-xs text-slate-500">Asignado</p>
-              <p className="text-lg font-semibold">${Number(mine.assignedAmount).toLocaleString('es-CO')}</p>
+              <p className="text-lg font-semibold">{formatCOP(mine.assignedAmount)}</p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Gastado</p>
-              <p className="text-lg font-semibold text-red-600">${Number(mine.spentAmount).toLocaleString('es-CO')}</p>
+              <p className="text-lg font-semibold text-red-600">{formatCOP(mine.spentAmount)}</p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Disponible</p>
               <p className="text-lg font-semibold text-emerald-600">
-                ${Number(mine.availableAmount).toLocaleString('es-CO')}
+                {formatCOP(mine.availableAmount)}
               </p>
             </div>
           </div>
@@ -163,10 +164,10 @@ export function PurchaseAllowancesPage() {
                   <tr key={a.id} className="border-t border-slate-100">
                     <td className="px-4 py-2">{a.user.fullName}</td>
                     <td className="px-4 py-2">{a.user.role}</td>
-                    <td className="px-4 py-2">${Number(a.assignedAmount).toLocaleString('es-CO')}</td>
-                    <td className="px-4 py-2 text-red-600">${Number(a.spentAmount).toLocaleString('es-CO')}</td>
+                    <td className="px-4 py-2">{formatCOP(a.assignedAmount)}</td>
+                    <td className="px-4 py-2 text-red-600">{formatCOP(a.spentAmount)}</td>
                     <td className="px-4 py-2 text-emerald-600">
-                      ${Number(a.availableAmount).toLocaleString('es-CO')}
+                      {formatCOP(a.availableAmount)}
                     </td>
                   </tr>
                 ))}
