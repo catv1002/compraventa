@@ -34,11 +34,12 @@ export class AccountingController {
   }
 
   /**
-   * Causación de intereses "de cierre de mes" a demanda: recorre todos los
-   * contratos de empeño vigentes (Active/Overdue) del tenant y causa el
-   * interés devengado y no reconocido de cada uno. El proyecto no tiene
-   * infraestructura de cron/scheduler todavía, así que esto se corre a mano.
-   * Secuencial a propósito, para no saturar la conexión a la base de datos.
+   * Causación de intereses a demanda para el tenant actual (ej. antes de un
+   * cierre puntual, sin esperar al job nocturno). El job diario
+   * (`InterestAccrualScheduler`, 1am, todos los tenants) es la vía normal
+   * desde Fase 7; este endpoint queda como complemento manual, no como único
+   * mecanismo. Secuencial a propósito, para no saturar la conexión a la base
+   * de datos.
    */
   @Post('accrue-interest')
   async accrueInterest(@CurrentUser() user: AuthenticatedUser) {

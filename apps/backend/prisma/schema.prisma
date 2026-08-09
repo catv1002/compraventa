@@ -372,6 +372,12 @@ model Contract {
   // devenga, no cuando se cobra. Null = nunca se ha causado nada todavía.
   interestAccruedThrough DateTime?
 
+  // Provisión por deterioro de cartera ya reconocida en contabilidad (contra
+  // la cuenta contra-activo 1105), acumulada — nunca se reversa aquí, solo
+  // sube cuando el contrato lleva más días en mora. Null/0 = sin provisión
+  // causada todavía. Ver InterestAccrualScheduler / provisionOverdueDebt.
+  provisionedAmount Decimal @db.Decimal(14, 2) @default(0)
+
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

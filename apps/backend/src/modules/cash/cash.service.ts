@@ -122,7 +122,13 @@ export class CashService {
 
     await this.eventEmitter.emitAsync(
       DomainEventNames.CashMovementRecorded,
-      new CashMovementRecordedEvent(cashRegisterId, dto.type as 'CashIn' | 'CashOut', dto.amount, dto.sourceType),
+      new CashMovementRecordedEvent(
+        cashRegisterId,
+        dto.type as 'CashIn' | 'CashOut',
+        dto.amount,
+        dto.sourceType,
+        dto.contractId ?? null,
+      ),
     );
 
     return movement;

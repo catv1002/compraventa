@@ -119,12 +119,23 @@ export class InventoryService {
       include: { attributes: true, category: true },
     });
 
+    // `qrCode` es lo que se imprime/codifica en la etiqueta física del
+    // artículo — se fija al propio id (ya único) porque no hay todavía una
+    // numeración de códigos independiente del negocio; permite que el
+    // escaneo (BarcodeScanButton) resuelva por código real en vez de
+    // depender de que el operador conozca el prefijo del uuid.
+    const withCode = await this.prisma.item.update({
+      where: { id: item.id },
+      data: { qrCode: item.id },
+      include: { attributes: true, category: true },
+    });
+
     await this.eventEmitter.emitAsync(
       DomainEventNames.ItemReceived,
       new ItemReceivedEvent(item.id, item.categoryId, item.branchId),
     );
 
-    return item;
+    return withCode;
   }
 
   /**
@@ -232,6 +243,24 @@ export class InventoryService {
     }
 
     return item;
+  }
+
+  // Coincidencia exacta contra los tres identificadores físicos posibles: el
+  // propio id (el qrCode hoy se fija igual al id, ver createItem), el
+  // qrCode explícito (por si en el futuro se desacopla del id) y el serial
+  // del fabricante. `null` en vez de excepción: es una búsqueda, no una
+  // confirmación de existencia — el llamante decide qué hacer si no hay match.
+  async findByCode(code: string, currentUser: AuthenticatedUser) {
+    const trimmed = code.trim();
+    if (!trimmed) return null;
+
+    return this.prisma.item.findFirst({
+      where: {
+        tenantId: currentUser.tenantId,
+        OR: [{ id: trimmed }, { qrCode: trimmed }, { serialNumber: trimmed }],
+      },
+      include: { attributes: true, category: true },
+    });
   }
 
   // Corrige un error de captura (peso/quilataje/descripción/serie) — SOLO

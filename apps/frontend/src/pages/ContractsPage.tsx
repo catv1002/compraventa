@@ -81,7 +81,7 @@ export function ContractsPage() {
   const [customerId, setCustomerId] = useState('');
   const [itemId, setItemId] = useState('');
   const [purchaseValue, setPurchaseValue] = useState('');
-  const [retroventaRate, setRetroventaRate] = useState('4');
+  const [interestRatePct, setInterestRatePct] = useState('4');
   const [dueDate, setDueDate] = useState('');
   const [discountAmount, setDiscountAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
@@ -107,7 +107,7 @@ export function ContractsPage() {
         customerId,
         itemId,
         principalAmount: Number(purchaseValue),
-        interestRate: Number(retroventaRate) / 100,
+        interestRate: Number(interestRatePct) / 100,
         dueDate: dueDate || undefined,
       }),
     onSuccess: () => {
@@ -200,7 +200,13 @@ export function ContractsPage() {
       <h2 className="mb-1 text-lg font-semibold text-slate-800">Contratos</h2>
       <p className="mb-4 text-xs text-slate-500">
         Empeño: el bien queda en garantía y el cliente lo recupera pagando el préstamo más intereses antes del
-        vencimiento. Legalmente es una compraventa con pacto de retroventa — ver docs/01-investigacion-negocio.md §1.1.
+        vencimiento.{' '}
+        <span
+          className="cursor-help underline decoration-dotted"
+          title="Legalmente es una compraventa con pacto de retroventa — ver docs/01-investigacion-negocio.md §1.1."
+        >
+          ¿Qué figura legal es esta?
+        </span>
       </p>
 
       {!register && (
@@ -213,14 +219,14 @@ export function ContractsPage() {
         <button
           type="button"
           onClick={() => { setContractType('Pawn'); setItemId(''); }}
-          className={`rounded-md px-3 py-1 text-sm ${contractType === 'Pawn' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
+          className={`rounded-md px-3 py-2 text-sm ${contractType === 'Pawn' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
         >
           Empeño
         </button>
         <button
           type="button"
           onClick={() => { setContractType('Sale'); setItemId(''); }}
-          className={`rounded-md px-3 py-1 text-sm ${contractType === 'Sale' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
+          className={`rounded-md px-3 py-2 text-sm ${contractType === 'Sale' ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700'}`}
         >
           Venta de mostrador
         </button>
@@ -249,7 +255,7 @@ export function ContractsPage() {
         />
         {contractType === 'Pawn' ? (
           <>
-            <input value={retroventaRate} onChange={(e) => setRetroventaRate(e.target.value)} placeholder="% de interés mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
+            <input value={interestRatePct} onChange={(e) => setInterestRatePct(e.target.value)} placeholder="% de interés mensual" type="number" step="0.1" className="rounded-md border border-slate-300 px-3 py-2 text-sm" required />
             {/* Opcional: si se deja vacío, el servidor aplica el plazo configurado
                 (6 meses por defecto, RN-02) en vez de exigir que se teclee. */}
             <input value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" title="Vencimiento (opcional)" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
@@ -361,7 +367,7 @@ export function ContractsPage() {
                         }
                       }}
                       disabled={!register}
-                      className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
+                      className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
                     >
                       Desembolsar
                     </button>
@@ -371,7 +377,7 @@ export function ContractsPage() {
                           withdrawContract.mutate(contract.id);
                         }
                       }}
-                      className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50"
+                      className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                     >
                       Retirar
                     </button>
@@ -389,7 +395,7 @@ export function ContractsPage() {
                       }
                     }}
                     disabled={!register}
-                    className="rounded-md border border-red-200 px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
                     Devolver
                   </button>
@@ -400,7 +406,7 @@ export function ContractsPage() {
                   // distintas de cobrar lo mismo con distinta calidad de UX.
                   <Link
                     to={`/cobro?q=${contract.contractNumber}`}
-                    className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
                     Cobrar
                   </Link>
@@ -411,7 +417,7 @@ export function ContractsPage() {
                 {contract.status !== 'Created' && contract.status !== 'Cancelled' && (
                   <button
                     onClick={() => setReceiptContractId(contract.id)}
-                    className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
                     Comprobante
                   </button>

@@ -46,6 +46,7 @@ interface Item {
   status: string;
   description: string | null;
   serialNumber: string | null;
+  qrCode: string | null;
   category: { id: string; name: string };
   attributes: ItemAttribute[];
 }
@@ -148,7 +149,7 @@ function MetalPricesStrip() {
               <button
                 onClick={() => setPrice.mutate(metal)}
                 disabled={!drafts[metal] || setPrice.isPending}
-                className="whitespace-nowrap rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="whitespace-nowrap rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Actualizar
               </button>
@@ -180,7 +181,11 @@ export function InventoryPage() {
   const visibleItems = codeSearch.trim()
     ? (items ?? []).filter((i) => {
         const needle = codeSearch.trim().toLowerCase();
-        return i.id.toLowerCase().includes(needle) || (i.serialNumber ?? '').toLowerCase().includes(needle);
+        return (
+          i.id.toLowerCase().includes(needle) ||
+          (i.qrCode ?? '').toLowerCase().includes(needle) ||
+          (i.serialNumber ?? '').toLowerCase().includes(needle)
+        );
       })
     : items;
   const [categoryId, setCategoryId] = useState('');
@@ -414,7 +419,7 @@ export function InventoryPage() {
                     }
                   }}
                   disabled={restockItem.isPending}
-                  className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Reponer a disponible
                 </button>
@@ -444,7 +449,7 @@ export function InventoryPage() {
                         <button
                           onClick={() => createAppraisal.mutate(item.id)}
                           disabled={createAppraisal.isPending}
-                          className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
+                          className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
                         >
                           {createAppraisal.isPending ? 'Guardando…' : 'Guardar'}
                         </button>
@@ -472,13 +477,13 @@ export function InventoryPage() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => openEdit(item)}
-                        className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         Editar
                       </button>
                       <button
                         onClick={() => setAppraisingItemId(item.id)}
-                        className="rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         Avaluar
                       </button>

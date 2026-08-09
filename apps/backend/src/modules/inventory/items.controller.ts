@@ -38,6 +38,18 @@ export class ItemsController {
     return this.inventoryService.listItems(user, { status, categoryId });
   }
 
+  /**
+   * Búsqueda exacta por código escaneado (físico o por cámara) — a diferencia
+   * de `GET /items` + filtro en el cliente, esto resuelve del lado servidor
+   * contra `qrCode`/`serialNumber`, sin depender de que el artículo ya esté
+   * en la página cargada. Declarado ANTES de `:id` por el mismo motivo que
+   * `cash-registers/statement`: Nest resuelve rutas en orden de declaración.
+   */
+  @Get('lookup/:code')
+  lookupByCode(@Param('code') code: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.inventoryService.findByCode(code, user);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.inventoryService.findOne(id, user);

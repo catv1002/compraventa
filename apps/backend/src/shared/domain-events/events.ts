@@ -52,6 +52,7 @@ export class CashMovementRecordedEvent {
     public readonly type: 'CashIn' | 'CashOut',
     public readonly amount: number,
     public readonly sourceType: string,
+    public readonly contractId: string | null = null,
   ) {}
 }
 

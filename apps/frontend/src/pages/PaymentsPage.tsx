@@ -276,6 +276,8 @@ function CounterPanel({
   const [hasThirdParty, setHasThirdParty] = useState(false);
   const [thirdPartyName, setThirdPartyName] = useState('');
   const [thirdPartyIdNumber, setThirdPartyIdNumber] = useState('');
+  const [lostReceipt, setLostReceipt] = useState(false);
+  const [verifiedIdNumber, setVerifiedIdNumber] = useState('');
 
   const {
     data: quote,
@@ -314,9 +316,13 @@ function CounterPanel({
         expectedTotal: quote?.settlementTotal,
         thirdPartyName: hasThirdParty ? thirdPartyName : undefined,
         thirdPartyIdNumber: hasThirdParty ? thirdPartyIdNumber : undefined,
+        lostReceipt,
+        verifiedIdNumber: lostReceipt ? verifiedIdNumber : undefined,
       }),
     onSuccess: () => {
       setConfirmingSettlement(false);
+      setLostReceipt(false);
+      setVerifiedIdNumber('');
       refresh();
       onSettled(`Préstamo N.º ${contract.contractNumber} liquidado. Entregue la joya al cliente.`);
     },
@@ -600,6 +606,26 @@ function CounterPanel({
             </div>
           )}
 
+          <label className="mb-2 flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={lostReceipt} onChange={(e) => setLostReceipt(e.target.checked)} />
+            El cliente no trae el recibo del empeño (recibo perdido)
+          </label>
+          {lostReceipt && (
+            <div className="mb-3">
+              <input
+                value={verifiedIdNumber}
+                onChange={(e) => setVerifiedIdNumber(e.target.value)}
+                placeholder="Cédula del documento presentado"
+                aria-label="Cédula verificada del cliente"
+                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Pida un documento de identidad y teclee la cédula tal como aparece — el sistema la verifica contra
+                la del cliente registrado antes de permitir la liquidación.
+              </p>
+            </div>
+          )}
+
           {settle.isError && <p className="mb-2 text-sm text-red-600">{(settle.error as ApiError).message}</p>}
 
           <div className="flex justify-end gap-2">
@@ -612,7 +638,7 @@ function CounterPanel({
             </button>
             <button
               onClick={() => settle.mutate()}
-              disabled={settle.isPending}
+              disabled={settle.isPending || (lostReceipt && !verifiedIdNumber.trim())}
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               {settle.isPending ? 'Liquidando…' : `Confirmar y cobrar ${formatCOP(quote.settlementTotal)}`}

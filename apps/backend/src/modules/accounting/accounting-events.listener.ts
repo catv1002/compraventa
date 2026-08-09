@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AccountingService } from './accounting.service';
 import { InterestPolicy, quoteInterest } from '../contracts/interest/interest-calculator';
 import {
+  CashMovementRecordedEvent,
   ContractDefaultedEvent,
   ContractSettledEvent,
   DisbursementIssuedEvent,
@@ -223,6 +224,82 @@ export class AccountingEventsListener {
     }
 
     await this.accountingService.postEntry(item.tenantId, DomainEventNames.SaleReturned, lines);
+  }
+
+  // Un CashOut sin `contractId` es, por definición, exactamente lo que
+  // `reports.service.ts#gastosDelDia` cuenta como "gasto operativo" (arriendo,
+  // servicios, etc. tecleados a mano por el cajero vía `POST
+  // /cash-registers/:id/movements`) — nunca un cobro/desembolso de contrato,
+  // que siempre trae `contractId` y ya tiene su propio evento específico
+  // (`onDisbursementIssued`, `onInterestPaymentRecorded`, etc.). Postear
+  // también aquí esos casos duplicaría el asiento, así que se filtra por
+  // `contractId == null` para no pisarlos.
+  @OnEvent(DomainEventNames.CashMovementRecorded)
+  async onCashMovementRecorded(event: CashMovementRecordedEvent) {
+    if (event.type !== 'CashOut' || event.contractId) return;
+
+    const register = await this.prisma.cashRegister.findUnique({
+      where: { id: event.cashRegisterId },
+      include: { branch: true },
+    });
+    if (!register) return;
+
+    await this.accountingService.postEntry(register.branch.tenantId, DomainEventNames.CashMovementRecorded, [
+      { accountCode: '5100', debit: event.amount, branchId: register.branchId },
+      { accountCode: '1000', credit: event.amount, branchId: register.branchId },
+    ]);
+  }
+
+  /**
+   * Provisión por deterioro de cartera vencida (NIIF-PYME sección 11).
+   *
+   * ⚠️ Política por defecto — PENDIENTE de confirmar con la contadora del
+   * negocio, igual que la nota de IVA en chart-of-accounts.ts. Los tramos y
+   * porcentajes de abajo son un criterio conservador razonable, no una regla
+   * fiscal ni contable verificada para este sector específico. Ajustar aquí
+   * en cuanto se confirme la política real.
+   *
+   * Solo Pawn Overdue/Forfeited: es la cartera que ya no se puede considerar
+   * "al día". El capital vigente (principalAmount - paidAmount) es la base;
+   * el interés causado no entra porque ya vive aparte en 1150 y su propio
+   * riesgo de cobro es harina de otro costal.
+   *
+   * `provisionedAmount` es acumulado y monótono creciente: solo se postea la
+   * DIFERENCIA contra lo ya provisionado, nunca se reversa aquí (si el
+   * contrato se pone al día o se liquida, sale del universo Overdue/Forfeited
+   * y deja de acumular — reversar la provisión existente sería una decisión
+   * de negocio explícita, fuera de alcance de este job automático).
+   */
+  private provisionRateFor(daysOverdue: number): number {
+    if (daysOverdue > 180) return 0.6;
+    if (daysOverdue > 90) return 0.3;
+    if (daysOverdue > 30) return 0.1;
+    return 0;
+  }
+
+  async provisionOverdueDebt(contractId: string, asOf: Date = new Date()) {
+    const contract = await this.prisma.contract.findUnique({ where: { id: contractId } });
+    if (!contract || contract.contractType !== ContractType.Pawn) return null;
+    if (contract.status !== ContractStatus.Overdue && contract.status !== ContractStatus.Forfeited) return null;
+    if (!contract.dueDate) return null;
+
+    const daysOverdue = Math.floor((asOf.getTime() - contract.dueDate.getTime()) / (1000 * 60 * 60 * 24));
+    const outstandingPrincipal = Number(contract.principalAmount) - Number(contract.paidAmount);
+    const requiredProvision = Math.round(outstandingPrincipal * this.provisionRateFor(daysOverdue));
+    const amount = requiredProvision - Number(contract.provisionedAmount);
+    if (amount <= 0) return null;
+
+    await this.accountingService.postEntry(contract.tenantId, 'CarteraProvisioned', [
+      { accountCode: '5200', debit: amount, branchId: contract.branchId },
+      { accountCode: '1105', credit: amount, branchId: contract.branchId },
+    ]);
+
+    await this.prisma.contract.update({
+      where: { id: contractId },
+      data: { provisionedAmount: requiredProvision },
+    });
+
+    return amount;
   }
 
   @OnEvent(DomainEventNames.RepairCompleted)

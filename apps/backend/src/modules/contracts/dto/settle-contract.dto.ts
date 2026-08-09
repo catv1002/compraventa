@@ -1,7 +1,21 @@
-import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { PaymentMethod } from '@prisma/client';
 
 export class SettleContractDto {
+  // Control antifraude: cuando el cliente no trae el recibo físico del
+  // empeño, el operador debe verificar identidad tecleando la cédula que
+  // aparece en el documento presentado — el servidor la compara contra la
+  // del cliente registrado en el contrato antes de permitir la liquidación.
+  // Sin esto, cualquier persona que sepa el número de contrato podría
+  // retirar la prenda de otro.
+  @IsOptional()
+  @IsBoolean()
+  lostReceipt?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verifiedIdNumber?: string;
+
   /**
    * Total que la pantalla le mostró al cliente. Es una **confirmación**, no la
    * fuente del importe: el servidor calcula el total y rechaza la operación si

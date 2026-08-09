@@ -762,6 +762,17 @@ export class ContractsService {
       );
     }
 
+    if (dto.lostReceipt) {
+      const customer = await this.prisma.customer.findUnique({ where: { id: contract.customerId } });
+      const provided = dto.verifiedIdNumber?.trim();
+      if (!provided || provided !== customer?.identificationNumber?.trim()) {
+        throw new BadRequestException(
+          'Recibo perdido: la cédula verificada no coincide con la del cliente registrado. ' +
+            'Confirme la identidad con el documento físico antes de liquidar.',
+        );
+      }
+    }
+
     const input = await this.buildQuoteInput(contract, new Date());
     const { principal, interest, total } = quoteSettlement(input);
 
