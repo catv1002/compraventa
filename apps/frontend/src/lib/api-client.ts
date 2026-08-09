@@ -76,3 +76,33 @@ export const api = {
   patch: <T>(path: string, data?: unknown) =>
     apiFetch<T>(path, { method: 'PATCH', body: data ? JSON.stringify(data) : undefined }),
 };
+
+/**
+ * Descarga un archivo autenticado (ej. exportación CSV) y dispara el
+ * "Guardar como" del navegador. No reusa `apiFetch` porque la respuesta no es
+ * JSON — es un blob binario con su propio `Content-Disposition`.
+ */
+export async function downloadFile(path: string, fallbackFilename: string): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      'ngrok-skip-browser-warning': 'true',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ message: response.statusText }));
+    throw new ApiError(body.message ?? 'No se pudo descargar el archivo', body, response.status);
+  }
+  const disposition = response.headers.get('Content-Disposition');
+  const match = disposition?.match(/filename="([^"]+)"/);
+  const filename = match?.[1] ?? fallbackFilename;
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}

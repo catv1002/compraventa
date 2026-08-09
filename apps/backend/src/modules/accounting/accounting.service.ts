@@ -60,7 +60,12 @@ export class AccountingService {
     });
   }
 
-  async incomeStatement(currentUser: AuthenticatedUser, from?: string, to?: string) {
+  /**
+   * Saldo por cuenta en el rango pedido. Débito natural (Asset/Expense) resta
+   * crédito; crédito natural (Revenue/Liability/Equity) resta débito — la
+   * misma convención en todas partes de este servicio, no una por reporte.
+   */
+  private async accountBalances(currentUser: AuthenticatedUser, from?: string, to?: string) {
     const entries = await this.findAll(currentUser, from, to);
     const totals = new Map<string, { name: string; type: string; debit: number; credit: number }>();
 
@@ -74,16 +79,59 @@ export class AccountingService {
       }
     }
 
-    const rows = Array.from(totals.entries()).map(([code, v]) => ({
+    return Array.from(totals.entries()).map(([code, v]) => ({
       code,
       name: v.name,
       type: v.type,
       balance: v.type === 'Revenue' || v.type === 'Liability' || v.type === 'Equity' ? v.credit - v.debit : v.debit - v.credit,
     }));
+  }
 
+  async incomeStatement(currentUser: AuthenticatedUser, from?: string, to?: string) {
+    const rows = await this.accountBalances(currentUser, from, to);
     const revenue = rows.filter((r) => r.type === 'Revenue').reduce((sum, r) => sum + r.balance, 0);
     const expense = rows.filter((r) => r.type === 'Expense').reduce((sum, r) => sum + r.balance, 0);
 
     return { rows, revenue, expense, netIncome: revenue - expense };
+  }
+
+  /**
+   * Balance General a una fecha de corte: acumulado DESDE EL INICIO (nunca se
+   * le pasa `from`, a diferencia del Estado de Resultados que sí es por
+   * período) — un activo no "empieza en cero" cada mes.
+   *
+   * Este sistema no tiene proceso de cierre contable (no hay asiento que
+   * traslade el resultado del ejercicio a una cuenta de patrimonio) — ver
+   * hallazgo de la auditoría contable. Mientras eso no exista, el resultado
+   * acumulado (ingresos - gastos a la fecha) se muestra como una línea aparte
+   * dentro de patrimonio ("Resultado del ejercicio, no cerrado") para que el
+   * Balance cuadre igual (Activo = Pasivo + Patrimonio) sin fingir que ya se
+   * cerró el período.
+   */
+  async balanceSheet(currentUser: AuthenticatedUser, asOf?: string) {
+    const rows = await this.accountBalances(currentUser, undefined, asOf);
+
+    const activos = rows.filter((r) => r.type === 'Asset');
+    const pasivos = rows.filter((r) => r.type === 'Liability');
+    const patrimonio = rows.filter((r) => r.type === 'Equity');
+    const revenue = rows.filter((r) => r.type === 'Revenue').reduce((sum, r) => sum + r.balance, 0);
+    const expense = rows.filter((r) => r.type === 'Expense').reduce((sum, r) => sum + r.balance, 0);
+    const resultadoDelEjercicio = revenue - expense;
+
+    const totalActivos = activos.reduce((sum, r) => sum + r.balance, 0);
+    const totalPasivos = pasivos.reduce((sum, r) => sum + r.balance, 0);
+    const totalPatrimonio = patrimonio.reduce((sum, r) => sum + r.balance, 0) + resultadoDelEjercicio;
+
+    return {
+      asOf: asOf ?? new Date().toISOString().slice(0, 10),
+      activos,
+      pasivos,
+      patrimonio,
+      resultadoDelEjercicio,
+      totalActivos,
+      totalPasivos,
+      totalPatrimonio,
+      cuadra: Math.abs(totalActivos - (totalPasivos + totalPatrimonio)) < 0.01,
+    };
   }
 }

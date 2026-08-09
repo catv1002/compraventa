@@ -28,6 +28,11 @@ export class AccountingController {
     return this.accountingService.incomeStatement(user, from, to);
   }
 
+  @Get('balance-sheet')
+  balanceSheet(@CurrentUser() user: AuthenticatedUser, @Query('asOf') asOf?: string) {
+    return this.accountingService.balanceSheet(user, asOf);
+  }
+
   /**
    * Causación de intereses "de cierre de mes" a demanda: recorre todos los
    * contratos de empeño vigentes (Active/Overdue) del tenant y causa el

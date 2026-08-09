@@ -3,6 +3,7 @@ import { CashMovementType, CashRegisterStatus, ContractMovementType, ContractTyp
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../security/current-user.decorator';
 import { DailyCloseQueryDto } from './dto/daily-close-query.dto';
+import { RangeReportQueryDto } from './dto/range-report-query.dto';
 
 /**
  * Fin de rango INCLUSIVO, idéntico al de `cash.service.ts` (`endOfRange`):
@@ -24,6 +25,20 @@ function startOfRange(value: string): Date {
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
   return isDateOnly ? new Date(`${value.trim()}T00:00:00.000Z`) : new Date(value);
 }
+
+/** Lista de días calendario (YYYY-MM-DD, UTC) entre dos fechas, ambas incluidas. */
+function daysBetween(fromStr: string, toStr: string): string[] {
+  const days: string[] = [];
+  const cursor = new Date(`${fromStr}T00:00:00.000Z`);
+  const last = new Date(`${toStr}T00:00:00.000Z`);
+  while (cursor.getTime() <= last.getTime()) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+const MAX_RANGE_DAYS = 186; // ~6 meses — más que eso, mejor pedirlo por partes.
 
 const DISPONIBLE_STATUSES: ItemStatus[] = [ItemStatus.InStock];
 const COMPROMETIDO_STATUSES: ItemStatus[] = [ItemStatus.InPledgeCustody, ItemStatus.OnLayaway];
@@ -100,6 +115,87 @@ export class ReportsService {
       valorInventarioAlCierre,
       diferenciaCajaPendiente,
     };
+  }
+
+  /**
+   * Reporte por rango de fechas — día a día, reutilizando EXACTAMENTE los
+   * mismos métodos privados que `getDailyClose` ya usa para un solo día (no
+   * hay una segunda implementación paralela del cálculo). `dineroDisponible`
+   * y `valorInventarioAlCierre` quedan fuera: son fotos de AHORA, no tienen
+   * sentido "por día" hacia atrás — para eso ya está `getDailyClose`.
+   */
+  async getRangeReport(query: RangeReportQueryDto, currentUser: AuthenticatedUser) {
+    if (new Date(query.to).getTime() < new Date(query.from).getTime()) {
+      throw new BadRequestException('El rango de fechas es inválido (hasta < desde)');
+    }
+    const days = daysBetween(query.from, query.to);
+    if (days.length > MAX_RANGE_DAYS) {
+      throw new BadRequestException(
+        `El rango pedido cubre ${days.length} días; el máximo por consulta es ${MAX_RANGE_DAYS}. Pídelo en partes más cortas.`,
+      );
+    }
+
+    const branchId = await this.resolveBranchId(query.branchId, currentUser);
+
+    const rows = await Promise.all(
+      days.map(async (dateStr) => {
+        const from = startOfRange(dateStr);
+        const to = endOfRange(dateStr);
+        const [
+          comprasDelDia,
+          ventasDelDia,
+          ingresosTotalesDelDia,
+          egresosTotalesDelDia,
+          gastosDelDia,
+          utilidadVentaDelDia,
+          utilidadInteresEmpenoDelDia,
+        ] = await Promise.all([
+          this.comprasDelDia(branchId, from, to),
+          this.ventasDelDia(branchId, from, to),
+          this.sumCashMovements(branchId, from, to, CashMovementType.CashIn),
+          this.sumCashMovements(branchId, from, to, CashMovementType.CashOut),
+          this.gastosDelDia(branchId, from, to),
+          this.utilidadVentaDelDia(currentUser.tenantId, branchId, from, to),
+          this.utilidadInteresEmpenoDelDia(currentUser.tenantId, branchId, from, to),
+        ]);
+        return {
+          fecha: dateStr,
+          comprasDelDia,
+          ventasDelDia,
+          ingresosTotalesDelDia,
+          egresosTotalesDelDia,
+          gastosDelDia,
+          utilidadVentaDelDia,
+          utilidadInteresEmpenoDelDia,
+          utilidadEstimadaDelDia: utilidadVentaDelDia + utilidadInteresEmpenoDelDia,
+        };
+      }),
+    );
+
+    const totales = rows.reduce(
+      (acc, row) => ({
+        comprasDelRango: acc.comprasDelRango + row.comprasDelDia,
+        ventasDelRango: acc.ventasDelRango + row.ventasDelDia,
+        ingresosTotalesDelRango: acc.ingresosTotalesDelRango + row.ingresosTotalesDelDia,
+        egresosTotalesDelRango: acc.egresosTotalesDelRango + row.egresosTotalesDelDia,
+        gastosDelRango: acc.gastosDelRango + row.gastosDelDia,
+        utilidadVentaDelRango: acc.utilidadVentaDelRango + row.utilidadVentaDelDia,
+        utilidadInteresEmpenoDelRango: acc.utilidadInteresEmpenoDelRango + row.utilidadInteresEmpenoDelDia,
+        utilidadEstimadaDelRango: acc.utilidadEstimadaDelRango + row.utilidadEstimadaDelDia,
+      }),
+      {
+        comprasDelRango: 0,
+        ventasDelRango: 0,
+        ingresosTotalesDelRango: 0,
+        egresosTotalesDelRango: 0,
+        gastosDelRango: 0,
+        utilidadVentaDelRango: 0,
+        utilidadInteresEmpenoDelRango: 0,
+        utilidadEstimadaDelRango: 0,
+      },
+    );
+
+    return { from: query.from, to: query.to, branchId, dias: rows, totales };
   }
 
   private async resolveBranchId(requestedBranchId: string | undefined, currentUser: AuthenticatedUser): Promise<string> {
