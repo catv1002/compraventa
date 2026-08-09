@@ -43,6 +43,7 @@ export function UsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeactivateUser, setPendingDeactivateUser] = useState<User | null>(null);
 
   const createUser = useMutation({
     mutationFn: () =>
@@ -113,8 +114,8 @@ export function UsersPage() {
 
   function handleToggleActive(user: User) {
     if (user.active) {
-      const confirmed = window.confirm(`¿Desactivar a ${user.fullName}? No podrá iniciar sesión.`);
-      if (!confirmed) return;
+      setPendingDeactivateUser(user);
+      return;
     }
     toggleActive.mutate({ id: user.id, active: !user.active });
   }
@@ -280,6 +281,31 @@ export function UsersPage() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {pendingDeactivateUser && (
+        <Modal title="Confirmar desactivación" onClose={() => setPendingDeactivateUser(null)}>
+          <p className="mb-4 text-sm text-slate-600">
+            ¿Desactivar a {pendingDeactivateUser.fullName}? No podrá iniciar sesión.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setPendingDeactivateUser(null)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                toggleActive.mutate({ id: pendingDeactivateUser.id, active: false });
+                setPendingDeactivateUser(null);
+              }}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Confirmar
+            </button>
+          </div>
         </Modal>
       )}
     </div>

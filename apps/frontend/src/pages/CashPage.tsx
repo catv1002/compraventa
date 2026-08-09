@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
+import { Modal } from '../components/Modal';
 
 interface CashMovement {
   id: string;
@@ -29,6 +30,7 @@ export function CashPage() {
   });
 
   const [baseAmount, setBaseAmount] = useState('');
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const [physicalCount, setPhysicalCount] = useState('');
   const [closeResult, setCloseResult] = useState<CloseRegisterResult | null>(null);
 
@@ -121,11 +123,7 @@ export function CashPage() {
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
               <button
-                onClick={() => {
-                  if (physicalCount && window.confirm('¿Cerrar la caja con este conteo? No se puede deshacer.')) {
-                    closeRegister.mutate();
-                  }
-                }}
+                onClick={() => setConfirmingClose(true)}
                 disabled={!physicalCount || closeRegister.isPending}
                 className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
@@ -168,6 +166,29 @@ export function CashPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {confirmingClose && (
+        <Modal title="Confirmar cierre de caja" onClose={() => setConfirmingClose(false)}>
+          <p className="mb-4 text-sm text-slate-600">¿Cerrar la caja con este conteo? No se puede deshacer.</p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmingClose(false)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                closeRegister.mutate();
+                setConfirmingClose(false);
+              }}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Confirmar
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
