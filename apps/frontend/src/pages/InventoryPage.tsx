@@ -171,8 +171,32 @@ export function InventoryPage() {
   });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [restockConfirmId, setRestockConfirmId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [codeSearch, setCodeSearch] = useState('');
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  // Un código escaneado (a diferencia de uno tecleado a mano) merece una
+  // resolución exacta y autoritativa del servidor (`GET /items/lookup/:code`,
+  // tenant-scoped), no el filtro por substring del cliente sobre la lista ya
+  // cargada — antes el endpoint existía pero ningún llamador lo usaba.
+  async function handleScan(code: string) {
+    setScanError(null);
+    try {
+      const found = await api.get<Item | null>(`/items/lookup/${encodeURIComponent(code)}`);
+      if (found) {
+        setCodeSearch(found.id);
+      } else {
+        setCodeSearch(code);
+        setScanError(`No se encontró ningún artículo con el código «${code}».`);
+      }
+    } catch {
+      // Si la búsqueda exacta falla (red, etc.), no se pierde el escaneo: se
+      // deja el código tal cual para que el filtro por substring del cliente
+      // lo intente igual.
+      setCodeSearch(code);
+    }
+  }
 
   // Funciona igual con un lector físico (escribe y termina en Enter, como un
   // teclado) que con la cámara (llena el mismo campo al leer). Coincidencia
@@ -361,23 +385,30 @@ export function InventoryPage() {
       <div className="mb-4 flex items-center gap-2">
         <input
           value={codeSearch}
-          onChange={(e) => setCodeSearch(e.target.value)}
+          onChange={(e) => {
+            setCodeSearch(e.target.value);
+            setScanError(null);
+          }}
           placeholder="Buscar por código (lector físico o pegar código)…"
           aria-label="Buscar artículo por código"
           className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
-        <BarcodeScanButton onScan={setCodeSearch} />
+        <BarcodeScanButton onScan={handleScan} />
         {codeSearch && (
           <button
             type="button"
-            onClick={() => setCodeSearch('')}
+            onClick={() => {
+              setCodeSearch('');
+              setScanError(null);
+            }}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-500 hover:bg-slate-50"
           >
             Limpiar
           </button>
         )}
       </div>
-      {codeSearch && (
+      {scanError && <p className="mb-2 text-xs text-red-600">{scanError}</p>}
+      {codeSearch && !scanError && (
         <p className="mb-2 text-xs text-slate-500">
           {visibleItems?.length ?? 0} artículo(s) coinciden con «{codeSearch}».
         </p>
@@ -413,11 +444,7 @@ export function InventoryPage() {
 
               {item.status === 'Returned' && user?.role !== 'SalesAdvisor' && (
                 <button
-                  onClick={() => {
-                    if (window.confirm('¿El artículo está en condiciones de volver a la vitrina?')) {
-                      restockItem.mutate(item.id);
-                    }
-                  }}
+                  onClick={() => setRestockConfirmId(item.id)}
                   disabled={restockItem.isPending}
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
@@ -734,6 +761,29 @@ export function InventoryPage() {
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {restockConfirmId && (
+        <Modal title="Confirmar reposición" onClose={() => setRestockConfirmId(null)}>
+          <p className="mb-4 text-sm text-slate-600">¿El artículo está en condiciones de volver a la vitrina?</p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setRestockConfirmId(null)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                restockItem.mutate(restockConfirmId);
+                setRestockConfirmId(null);
+              }}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Confirmar
+            </button>
+          </div>
         </Modal>
       )}
     </div>

@@ -830,6 +830,12 @@ export class ContractsService {
           amount: total,
           thirdPartyName: dto.thirdPartyName,
           thirdPartyIdNumber: dto.thirdPartyIdNumber,
+          // Deja rastro auditable de la verificación de identidad que ya se
+          // hizo arriba (comparación contra customer.identificationNumber),
+          // no solo el checkbox — si hay una reclamación de fraude después,
+          // esto prueba qué cédula se verificó, no solo que se marcó "sí".
+          lostReceipt: dto.lostReceipt ?? false,
+          lostReceiptVerifiedId: dto.lostReceipt ? dto.verifiedIdNumber?.trim() : undefined,
         },
       });
 

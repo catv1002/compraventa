@@ -425,6 +425,18 @@ model ContractMovement {
   thirdPartyName     String?
   thirdPartyIdNumber String?
 
+  // Control antifraude de recibo perdido (Fase 7/11): antes se validaba en
+  // `ContractsService.settle()` (la cédula tecleada debía coincidir con la
+  // del cliente registrado) pero el resultado de esa verificación no
+  // quedaba en ningún lado — si más tarde hay una reclamación de fraude, no
+  // hay forma de comprobar que se pidió documento y se verificó identidad.
+  // `lostReceiptVerifiedId` guarda la cédula que el cajero tecleó (ya
+  // validada contra `Customer.identificationNumber` antes de llegar aquí),
+  // no un booleano suelto — así queda registrado QUÉ se verificó, no solo
+  // que se marcó un checkbox.
+  lostReceipt           Boolean @default(false)
+  lostReceiptVerifiedId String?
+
   @@map("contract_movements")
 }
 

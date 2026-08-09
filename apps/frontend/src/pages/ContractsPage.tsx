@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP } from '../lib/format';
+import { businessStatus } from '../lib/contract-status';
 import { Modal } from '../components/Modal';
 import { Receipt, ReceiptData } from '../components/Receipt';
 import { TicketReceipt, TicketReceiptData } from '../components/TicketReceipt';
@@ -30,28 +31,6 @@ interface CashRegister {
   id: string;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  Created: 'Creado (pendiente de desembolso)',
-  Active: 'Activo',
-  Renewed: 'Renovado',
-  Overdue: 'En mora',
-  Expired: 'Vencido',
-  Settled: 'Liquidado',
-  Forfeited: 'Rematado',
-  Cancelled: 'Cancelado',
-};
-
-// "Contrato Retirado" es un Cancelled de tipo Pawn/DirectPurchase antes de
-// desembolso — distinto de un Layaway cancelado. Ver docs/01-investigacion-negocio.md §8.
-function statusLabel(contract: Contract) {
-  if (contract.status === 'Cancelled' && contract.contractType === 'Sale') {
-    return 'Devuelto';
-  }
-  if (contract.status === 'Cancelled' && contract.contractType !== 'Layaway') {
-    return 'Retirado';
-  }
-  return STATUS_LABELS[contract.status] ?? contract.status;
-}
 
 const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: 'Cash', label: 'Efectivo' },
@@ -87,6 +66,14 @@ export function ContractsPage() {
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [receiptContractId, setReceiptContractId] = useState<string | null>(null);
   const [receiptTicketId, setReceiptTicketId] = useState<string | null>(null);
+  // Confirmación genérica para operaciones irreversibles (Desembolsar,
+  // Retirar, Devolver): antes cada una usaba `window.confirm`, que no tiene
+  // el mismo tratamiento de foco/teclado que el resto de la app desde que
+  // `Modal` se hizo accesible — un `window.confirm` no ofrece la misma
+  // garantía de foco/Escape entre navegadores/dispositivos.
+  const [pendingAction, setPendingAction] = useState<{ title: string; message: string; onConfirm: () => void } | null>(
+    null,
+  );
 
   // Carrito del ticket de venta de mostrador (Option B): varios artículos, un
   // Contract Sale por línea, agrupados por saleTicketId al cobrar. Ver
@@ -352,7 +339,9 @@ export function ContractsPage() {
                 </p>
                 <p className="text-xs text-slate-500">
                   Préstamo {formatCOP(contract.principalAmount)} ·{' '}
-                  <span className="font-medium">{statusLabel(contract)}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${businessStatus(contract).tone}`}>
+                    {businessStatus(contract).label}
+                  </span>
                   {contract.dueDate && ` · vence ${new Date(contract.dueDate).toLocaleDateString('es-CO')}`}
                 </p>
               </div>
@@ -361,22 +350,26 @@ export function ContractsPage() {
                 {contract.status === 'Created' && (
                   <>
                     <button
-                      onClick={() => {
-                        if (window.confirm(`¿Desembolsar ${formatCOP(contract.principalAmount)} de la caja? Esto mueve dinero real y no se puede deshacer.`)) {
-                          disburseContract.mutate(contract.id);
-                        }
-                      }}
+                      onClick={() =>
+                        setPendingAction({
+                          title: 'Confirmar desembolso',
+                          message: `¿Desembolsar ${formatCOP(contract.principalAmount)} de la caja? Esto mueve dinero real y no se puede deshacer.`,
+                          onConfirm: () => disburseContract.mutate(contract.id),
+                        })
+                      }
                       disabled={!register}
                       className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
                     >
                       Desembolsar
                     </button>
                     <button
-                      onClick={() => {
-                        if (window.confirm('¿Retirar este contrato? El cliente no se queda con el préstamo y no se puede deshacer.')) {
-                          withdrawContract.mutate(contract.id);
-                        }
-                      }}
+                      onClick={() =>
+                        setPendingAction({
+                          title: 'Confirmar retiro',
+                          message: 'Este contrato se retira: el cliente no se queda con el préstamo y no se puede deshacer.',
+                          onConfirm: () => withdrawContract.mutate(contract.id),
+                        })
+                      }
                       className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                     >
                       Retirar
@@ -385,15 +378,13 @@ export function ContractsPage() {
                 )}
                 {contract.contractType === 'Sale' && contract.status === 'Settled' && (
                   <button
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `¿Devolver esta venta por ${formatCOP(contract.principalAmount)}? Se reversa el dinero y el artículo vuelve a inventario para revisión.`,
-                        )
-                      ) {
-                        returnSale.mutate(contract.id);
-                      }
-                    }}
+                    onClick={() =>
+                      setPendingAction({
+                        title: 'Confirmar devolución',
+                        message: `¿Devolver esta venta por ${formatCOP(contract.principalAmount)}? Se reversa el dinero y el artículo vuelve a inventario para revisión.`,
+                        onConfirm: () => returnSale.mutate(contract.id),
+                      })
+                    }
                     disabled={!register}
                     className="rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
@@ -437,6 +428,29 @@ export function ContractsPage() {
       {receiptTicketId && (
         <Modal title="Comprobante del ticket" onClose={() => setReceiptTicketId(null)}>
           <TicketReceiptLoader saleTicketId={receiptTicketId} />
+        </Modal>
+      )}
+
+      {pendingAction && (
+        <Modal title={pendingAction.title} onClose={() => setPendingAction(null)}>
+          <p className="mb-4 text-sm text-slate-600">{pendingAction.message}</p>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setPendingAction(null)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                pendingAction.onConfirm();
+                setPendingAction(null);
+              }}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Confirmar
+            </button>
+          </div>
         </Modal>
       )}
     </div>

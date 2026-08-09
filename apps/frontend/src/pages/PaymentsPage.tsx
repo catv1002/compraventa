@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api-client';
 import { formatCOP, formatDate } from '../lib/format';
+import { businessStatus } from '../lib/contract-status';
 import { Modal } from '../components/Modal';
 
 /**
@@ -69,35 +70,6 @@ interface Quote {
 }
 
 type Operation = 'interest' | 'principal' | 'settle';
-
-/**
- * Los ocho `ContractStatus` internos agrupados en los cinco estados con los que
- * razona el negocio, con color **y** texto (nada depende solo del color).
- */
-function businessStatus(contract: Contract): { label: string; tone: string; operable: boolean } {
-  switch (contract.status) {
-    case 'Active':
-    case 'Renewed':
-      return { label: 'Vigente', tone: 'bg-slate-100 text-slate-700', operable: true };
-    case 'Overdue':
-    case 'Expired':
-      return { label: 'Vencido', tone: 'bg-amber-100 text-amber-800', operable: true };
-    case 'Created':
-      return { label: 'Sin desembolsar', tone: 'bg-slate-100 text-slate-600', operable: false };
-    case 'Settled':
-      return { label: 'Liquidado', tone: 'bg-emerald-100 text-emerald-800', operable: false };
-    case 'Forfeited':
-      return { label: 'Joya rematada', tone: 'bg-red-100 text-red-700', operable: false };
-    case 'Cancelled':
-      return {
-        label: contract.contractType === 'Layaway' ? 'Anulado' : 'Retirado',
-        tone: 'bg-slate-200 text-slate-500',
-        operable: false,
-      };
-    default:
-      return { label: contract.status, tone: 'bg-slate-100 text-slate-700', operable: false };
-  }
-}
 
 function daysSince(iso: string): number {
   const ms = Date.now() - new Date(iso).getTime();
@@ -500,7 +472,7 @@ function CounterPanel({
                 <button
                   onClick={() => payInterest.mutate()}
                   disabled={noRegister || busy}
-                  className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
                   {payInterest.isPending ? 'Registrando…' : `Cobrar ${formatCOP(interestFor(monthsToPay))}`}
                 </button>
@@ -519,7 +491,7 @@ function CounterPanel({
                   onClick={() => setPrincipalFraction(fraction)}
                   disabled={blockedPrincipal}
                   aria-pressed={principalFraction === fraction}
-                  className={`rounded-md border px-3 py-1.5 text-sm disabled:opacity-50 ${
+                  className={`rounded-md border px-3 py-2 text-sm disabled:opacity-50 ${
                     principalFraction === fraction
                       ? 'border-slate-900 bg-slate-900 text-white'
                       : 'border-slate-300 text-slate-700 hover:bg-slate-50'
@@ -531,7 +503,7 @@ function CounterPanel({
               <button
                 onClick={() => payPrincipal.mutate(principalPayment)}
                 disabled={blockedPrincipal || noRegister || busy}
-                className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 {payPrincipal.isPending ? 'Registrando…' : `Cobrar ${formatCOP(principalPayment)}`}
               </button>
